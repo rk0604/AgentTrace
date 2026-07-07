@@ -18,3 +18,27 @@ branch and separate agent workstreams.
 4. Merge finished work back through pull requests or reviewed local merges.
 5. Rebase or merge `main` into each agent branch regularly to reduce drift.
 
+## Run the toy CLI
+
+From the Codex worktree:
+
+```powershell
+cd C:\Users\Risha\Desktop\AgentTrace-codex
+go run ./cmd/agenttrace
+```
+
+The default command runs the toy pipeline with the injected Reference failure.
+It prints the dependency ordered steps, each step dependency, each check status,
+and the root cause attribution.
+
+To run the same toy pipeline without the injected failure:
+
+```powershell
+go run ./cmd/agenttrace --healthy
+```
+
+To run all tests:
+
+```powershell
+go test ./...
+```
