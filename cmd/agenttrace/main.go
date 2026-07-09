@@ -17,6 +17,17 @@ type stepView struct {
 	Reason  string
 }
 
+type graphLevel struct {
+	Index int
+	Views []stepView
+}
+
+type graphEdge struct {
+	Source stepView
+	Target stepView
+	Cause  bool
+}
+
 func main() {
 	healthy := flag.Bool("healthy", false, "run the toy pipeline without the injected reference failure")
 	flag.Parse()
@@ -185,7 +196,7 @@ func checkStatusText(view stepView) string {
 	return "passed"
 }
 
-// printFlowChart writes an edge based flow chart.
+// printFlowChart writes a generic dependency graph flow chart.
 //
 // Input
 // views []stepView
@@ -198,34 +209,250 @@ func checkStatusText(view stepView) string {
 // None
 func printFlowChart(views []stepView, result attrib.AttributionResult) {
 	viewsByID := stepViewByID(views)
-	extractor := viewsByID[toypipeline.ExtractorStepID]
-	reference := viewsByID[toypipeline.ReferenceStepID]
-	comparator := viewsByID[toypipeline.ComparatorStepID]
-	synthesizer := viewsByID[toypipeline.SynthesizerStepID]
+	levelsByID := graphLevelsByID(views, viewsByID)
+	levels := graphLevels(views, levelsByID)
+	edges := graphEdges(views, viewsByID, result)
 
 	fmt.Printf("Flow chart\n")
 	fmt.Printf("\n")
-	fmt.Printf("%s      %s\n", boxTop(), boxTop())
-	fmt.Printf("%s      %s\n", boxLine(extractor.Step.AgentName), boxLine(reference.Step.AgentName))
-	fmt.Printf("%s      %s\n", boxLine(chartNodeStatus(extractor, result)), boxLine(chartNodeStatus(reference, result)))
-	fmt.Printf("%s      %s\n", boxBottom(), boxBottom())
-	fmt.Printf("          \\                         %s\n", referenceDownEdge(result))
-	fmt.Printf("           \\                        %s\n", referenceEdgeLabel(result))
-	fmt.Printf("            \\                       %s\n", referenceArrow(result))
-	fmt.Printf("             %s\n", boxTop())
-	fmt.Printf("             %s\n", boxLine(comparator.Step.AgentName))
-	fmt.Printf("             %s\n", boxLine(chartNodeStatus(comparator, result)))
-	fmt.Printf("             %s\n", boxBottom())
-	fmt.Printf("                       |\n")
-	fmt.Printf("                       v\n")
-	fmt.Printf("             %s\n", boxTop())
-	fmt.Printf("             %s\n", boxLine(synthesizer.Step.AgentName))
-	fmt.Printf("             %s\n", boxLine(chartNodeStatus(synthesizer, result)))
-	fmt.Printf("             %s\n", boxBottom())
+
+	for _, level := range levels {
+		fmt.Printf("Level %d\n", level.Index)
+		printLevelBoxes(level.Views, result)
+		printOutgoingEdges(level.Index, edges, levelsByID)
+		fmt.Printf("\n")
+	}
 
 	if result.RootCause != nil {
 		fmt.Printf("\nMarked node: %s\n", result.RootCause.StepID)
 		fmt.Printf("Marked edge: bad output leaving %s\n", result.RootCause.StepID)
+	}
+}
+
+// graphLevelsByID computes the visual level for each node.
+//
+// Input
+// views []stepView
+// Display rows in dependency order.
+//
+// viewsByID map[string]stepView
+// Lookup table keyed by step ID.
+//
+// Output
+// map[string]int
+// Visual level keyed by step ID.
+func graphLevelsByID(views []stepView, viewsByID map[string]stepView) map[string]int {
+	levelsByID := make(map[string]int, len(views))
+
+	for _, view := range views {
+		level := 0
+
+		for _, dependencyID := range view.Step.DependsOn {
+			if _, exists := viewsByID[dependencyID]; !exists {
+				continue
+			}
+
+			dependencyLevel := levelsByID[dependencyID] + 1
+			if dependencyLevel > level {
+				level = dependencyLevel
+			}
+		}
+
+		levelsByID[view.Step.StepID] = level
+	}
+
+	return levelsByID
+}
+
+// graphLevels groups nodes by visual level.
+//
+// Input
+// views []stepView
+// Display rows in dependency order.
+//
+// levelsByID map[string]int
+// Visual level keyed by step ID.
+//
+// Output
+// []graphLevel
+// Levels containing nodes to render together.
+func graphLevels(views []stepView, levelsByID map[string]int) []graphLevel {
+	maxLevel := 0
+	for _, level := range levelsByID {
+		if level > maxLevel {
+			maxLevel = level
+		}
+	}
+
+	levels := make([]graphLevel, maxLevel+1)
+	for index := range levels {
+		levels[index] = graphLevel{Index: index}
+	}
+
+	for _, view := range views {
+		level := levelsByID[view.Step.StepID]
+		levels[level].Views = append(levels[level].Views, view)
+	}
+
+	return levels
+}
+
+// graphEdges builds dependency edges for the flow chart.
+//
+// Input
+// views []stepView
+// Display rows in dependency order.
+//
+// viewsByID map[string]stepView
+// Lookup table keyed by step ID.
+//
+// result attrib.AttributionResult
+// Root cause attribution result.
+//
+// Output
+// []graphEdge
+// Dependency edges with cause markers when applicable.
+func graphEdges(views []stepView, viewsByID map[string]stepView, result attrib.AttributionResult) []graphEdge {
+	edges := make([]graphEdge, 0)
+
+	for _, target := range views {
+		for _, sourceID := range target.Step.DependsOn {
+			source, exists := viewsByID[sourceID]
+			if !exists {
+				continue
+			}
+
+			edges = append(edges, graphEdge{
+				Source: source,
+				Target: target,
+				Cause:  isCauseEdge(sourceID, result),
+			})
+		}
+	}
+
+	return edges
+}
+
+// isCauseEdge reports whether an edge carries the failed output.
+//
+// Input
+// sourceID string
+// Step ID for the upstream edge source.
+//
+// result attrib.AttributionResult
+// Root cause attribution result.
+//
+// Output
+// bool
+// True when the edge leaves the root cause step.
+func isCauseEdge(sourceID string, result attrib.AttributionResult) bool {
+	return result.RootCause != nil && sourceID == result.RootCause.StepID
+}
+
+// printLevelBoxes writes boxes for all nodes in one graph level.
+//
+// Input
+// views []stepView
+// Display rows for one visual level.
+//
+// result attrib.AttributionResult
+// Root cause attribution result.
+//
+// Output
+// None
+func printLevelBoxes(views []stepView, result attrib.AttributionResult) {
+	const maxBoxesPerRow = 3
+
+	for start := 0; start < len(views); start += maxBoxesPerRow {
+		end := start + maxBoxesPerRow
+		if end > len(views) {
+			end = len(views)
+		}
+
+		printBoxRow(views[start:end], result)
+	}
+}
+
+// printBoxRow writes one horizontal row of node boxes.
+//
+// Input
+// views []stepView
+// Display rows to render as boxes.
+//
+// result attrib.AttributionResult
+// Root cause attribution result.
+//
+// Output
+// None
+func printBoxRow(views []stepView, result attrib.AttributionResult) {
+	printRepeatedBoxLine(views, boxTop)
+
+	for _, view := range views {
+		fmt.Printf("%s  ", boxLine(view.Step.AgentName))
+	}
+	fmt.Printf("\n")
+
+	for _, view := range views {
+		fmt.Printf("%s  ", boxLine(chartNodeStatus(view, result)))
+	}
+	fmt.Printf("\n")
+
+	for _, view := range views {
+		fmt.Printf("%s  ", boxLine("id "+view.Step.StepID))
+	}
+	fmt.Printf("\n")
+
+	printRepeatedBoxLine(views, boxBottom)
+}
+
+// printRepeatedBoxLine writes one border row for each box in a row.
+//
+// Input
+// views []stepView
+// Display rows to render as boxes.
+//
+// line func() string
+// Function that returns a box border line.
+//
+// Output
+// None
+func printRepeatedBoxLine(views []stepView, line func() string) {
+	for range views {
+		fmt.Printf("%s  ", line())
+	}
+	fmt.Printf("\n")
+}
+
+// printOutgoingEdges writes edges leaving one graph level.
+//
+// Input
+// level int
+// Visual level whose outgoing edges should be displayed.
+//
+// edges []graphEdge
+// Dependency edges in the graph.
+//
+// levelsByID map[string]int
+// Visual level keyed by step ID.
+//
+// Output
+// None
+func printOutgoingEdges(level int, edges []graphEdge, levelsByID map[string]int) {
+	levelEdges := make([]graphEdge, 0)
+
+	for _, edge := range edges {
+		if levelsByID[edge.Source.Step.StepID] == level {
+			levelEdges = append(levelEdges, edge)
+		}
+	}
+
+	if len(levelEdges) == 0 {
+		return
+	}
+
+	fmt.Printf("Edges\n")
+	for _, edge := range levelEdges {
+		fmt.Printf("  %s\n", edgeText(edge))
 	}
 }
 
@@ -248,45 +475,24 @@ func stepViewByID(views []stepView) map[string]stepView {
 	return viewsByID
 }
 
-// nodeText formats one node for the CLI flow chart.
-//
-// Input
-// view stepView
-// Display row for one trace step.
-//
-// result attrib.AttributionResult
-// Root cause attribution result.
-//
-// Output
-// string
-// Human readable node text.
-func nodeText(view stepView, result attrib.AttributionResult) string {
-	label := fmt.Sprintf("[%s %s", view.Step.AgentName, chartStatusText(view))
-	if result.RootCause != nil && view.Step.StepID == result.RootCause.StepID {
-		label += " ROOT CAUSE"
-	}
-
-	return label + "]"
-}
-
 // edgeText formats one dependency edge for the CLI flow chart.
 //
 // Input
-// sourceID string
-// Step ID for the upstream edge source.
-//
-// result attrib.AttributionResult
-// Root cause attribution result.
+// edge graphEdge
+// Dependency edge to display.
 //
 // Output
 // string
 // Human readable edge text.
-func edgeText(sourceID string, result attrib.AttributionResult) string {
-	if result.RootCause != nil && sourceID == result.RootCause.StepID {
-		return " == CAUSE EDGE ==> "
+func edgeText(edge graphEdge) string {
+	source := edge.Source.Step.StepID
+	target := edge.Target.Step.StepID
+
+	if edge.Cause {
+		return fmt.Sprintf("%s == CAUSE EDGE ==> %s", source, target)
 	}
 
-	return " -> "
+	return fmt.Sprintf("%s -> %s", source, target)
 }
 
 // chartStatusText formats one compact node status for the CLI flow chart.
@@ -364,58 +570,31 @@ func boxBottom() string {
 // string
 // Box row containing the text.
 func boxLine(text string) string {
-	return fmt.Sprintf("| %-20s |", text)
+	return fmt.Sprintf("| %-20s |", fitText(text, 20))
 }
 
-// referenceDownEdge formats the first cause edge row for the Reference branch.
+// fitText trims text to a fixed display width.
 //
 // Input
-// result attrib.AttributionResult
-// Root cause attribution result.
+// text string
+// Text to fit.
+//
+// width int
+// Maximum allowed width.
 //
 // Output
 // string
-// Edge row text.
-func referenceDownEdge(result attrib.AttributionResult) string {
-	if result.RootCause != nil && result.RootCause.StepID == toypipeline.ReferenceStepID {
-		return "||"
+// Text that fits within the requested width.
+func fitText(text string, width int) string {
+	if len(text) <= width {
+		return text
 	}
 
-	return "/"
-}
-
-// referenceEdgeLabel formats the cause edge label for the Reference branch.
-//
-// Input
-// result attrib.AttributionResult
-// Root cause attribution result.
-//
-// Output
-// string
-// Edge label text.
-func referenceEdgeLabel(result attrib.AttributionResult) string {
-	if result.RootCause != nil && result.RootCause.StepID == toypipeline.ReferenceStepID {
-		return "|| CAUSE EDGE"
+	if width <= 3 {
+		return text[:width]
 	}
 
-	return "/"
-}
-
-// referenceArrow formats the final Reference branch arrow row.
-//
-// Input
-// result attrib.AttributionResult
-// Root cause attribution result.
-//
-// Output
-// string
-// Arrow row text.
-func referenceArrow(result attrib.AttributionResult) string {
-	if result.RootCause != nil && result.RootCause.StepID == toypipeline.ReferenceStepID {
-		return "vv"
-	}
-
-	return "v"
+	return text[:width-3] + "..."
 }
 
 // exitWithError prints an error and exits the program.
