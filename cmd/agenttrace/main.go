@@ -136,13 +136,16 @@ func printReport(trace attrib.Trace, views []stepView, result attrib.Attribution
 	fmt.Printf("Attribution result\n")
 	fmt.Printf("Status: %s\n", result.Status)
 	if result.RootCause == nil {
-		fmt.Printf("Root cause: none\n")
+		fmt.Printf("Root cause: none\n\n")
+		printFlowChart(views, result)
 		return
 	}
 
 	fmt.Printf("Root cause step: %s\n", result.RootCause.StepID)
 	fmt.Printf("Root cause agent: %s\n", result.RootCause.AgentName)
-	fmt.Printf("Root cause reason: %s\n", result.RootCause.Reason)
+	fmt.Printf("Root cause reason: %s\n\n", result.RootCause.Reason)
+
+	printFlowChart(views, result)
 }
 
 // dependsOnText formats dependency IDs for display.
@@ -180,6 +183,122 @@ func checkStatusText(view stepView) string {
 	}
 
 	return "passed"
+}
+
+// printFlowChart writes an edge based flow chart.
+//
+// Input
+// views []stepView
+// Display rows for dependency ordered steps.
+//
+// result attrib.AttributionResult
+// Root cause attribution result.
+//
+// Output
+// None
+func printFlowChart(views []stepView, result attrib.AttributionResult) {
+	viewsByID := stepViewByID(views)
+
+	fmt.Printf("Flow chart\n")
+	for _, target := range views {
+		if len(target.Step.DependsOn) == 0 {
+			continue
+		}
+
+		for _, sourceID := range target.Step.DependsOn {
+			source, exists := viewsByID[sourceID]
+			if !exists {
+				continue
+			}
+
+			fmt.Printf("%s%s%s\n", nodeText(source, result), edgeText(source.Step.StepID, result), nodeText(target, result))
+		}
+	}
+
+	if result.RootCause != nil {
+		fmt.Printf("\nMarked node: %s\n", result.RootCause.StepID)
+		fmt.Printf("Marked edge: bad output leaving %s\n", result.RootCause.StepID)
+	}
+}
+
+// stepViewByID creates a lookup table for CLI step views.
+//
+// Input
+// views []stepView
+// Display rows for dependency ordered steps.
+//
+// Output
+// map[string]stepView
+// Lookup table keyed by step ID.
+func stepViewByID(views []stepView) map[string]stepView {
+	viewsByID := make(map[string]stepView, len(views))
+
+	for _, view := range views {
+		viewsByID[view.Step.StepID] = view
+	}
+
+	return viewsByID
+}
+
+// nodeText formats one node for the CLI flow chart.
+//
+// Input
+// view stepView
+// Display row for one trace step.
+//
+// result attrib.AttributionResult
+// Root cause attribution result.
+//
+// Output
+// string
+// Human readable node text.
+func nodeText(view stepView, result attrib.AttributionResult) string {
+	label := fmt.Sprintf("[%s %s", view.Step.AgentName, chartStatusText(view))
+	if result.RootCause != nil && view.Step.StepID == result.RootCause.StepID {
+		label += " ROOT CAUSE"
+	}
+
+	return label + "]"
+}
+
+// edgeText formats one dependency edge for the CLI flow chart.
+//
+// Input
+// sourceID string
+// Step ID for the upstream edge source.
+//
+// result attrib.AttributionResult
+// Root cause attribution result.
+//
+// Output
+// string
+// Human readable edge text.
+func edgeText(sourceID string, result attrib.AttributionResult) string {
+	if result.RootCause != nil && sourceID == result.RootCause.StepID {
+		return " == CAUSE EDGE ==> "
+	}
+
+	return " -> "
+}
+
+// chartStatusText formats one compact node status for the CLI flow chart.
+//
+// Input
+// view stepView
+// Display row for one trace step.
+//
+// Output
+// string
+// Compact node status text.
+func chartStatusText(view stepView) string {
+	if !view.Checked {
+		return "SKIPPED"
+	}
+	if view.Failed {
+		return "FAIL"
+	}
+
+	return "PASS"
 }
 
 // exitWithError prints an error and exits the program.
