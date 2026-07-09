@@ -28,6 +28,12 @@ type graphEdge struct {
 	Cause  bool
 }
 
+type nodePlacement struct {
+	View stepView
+	X    int
+	Y    int
+}
+
 func main() {
 	healthy := flag.Bool("healthy", false, "run the toy pipeline without the injected reference failure")
 	flag.Parse()
@@ -215,18 +221,285 @@ func printFlowChart(views []stepView, result attrib.AttributionResult) {
 
 	fmt.Printf("Flow chart\n")
 	fmt.Printf("\n")
-
-	for _, level := range levels {
-		fmt.Printf("Level %d\n", level.Index)
-		printLevelBoxes(level.Views, result)
-		printOutgoingEdges(level.Index, edges, levelsByID)
-		fmt.Printf("\n")
+	for _, line := range renderFlowChart(levels, edges, result) {
+		fmt.Printf("%s\n", line)
 	}
 
 	if result.RootCause != nil {
 		fmt.Printf("\nMarked node: %s\n", result.RootCause.StepID)
 		fmt.Printf("Marked edge: bad output leaving %s\n", result.RootCause.StepID)
 	}
+}
+
+// renderFlowChart builds a connected ASCII graph diagram.
+//
+// Input
+// levels []graphLevel
+// Nodes grouped by visual level.
+//
+// edges []graphEdge
+// Dependency edges in the graph.
+//
+// result attrib.AttributionResult
+// Root cause attribution result.
+//
+// Output
+// []string
+// Lines that form the rendered graph diagram.
+func renderFlowChart(levels []graphLevel, edges []graphEdge, result attrib.AttributionResult) []string {
+	placements, width, height := graphPlacements(levels)
+	canvas := newCanvas(width, height)
+
+	for _, edge := range edges {
+		source := placements[edge.Source.Step.StepID]
+		target := placements[edge.Target.Step.StepID]
+		drawConnector(canvas, source, target, edge.Cause)
+	}
+
+	for _, placement := range placements {
+		drawNodeBox(canvas, placement, result)
+	}
+
+	return canvasLines(canvas)
+}
+
+// graphPlacements computes node positions for the ASCII canvas.
+//
+// Input
+// levels []graphLevel
+// Nodes grouped by visual level.
+//
+// Output
+// map[string]nodePlacement
+// Node placement keyed by step ID.
+//
+// int
+// Canvas width.
+//
+// int
+// Canvas height.
+func graphPlacements(levels []graphLevel) (map[string]nodePlacement, int, int) {
+	const boxWidth = 24
+	const boxHeight = 4
+	const horizontalGap = 8
+	const verticalGap = 5
+
+	maxLevelWidth := 0
+	for _, level := range levels {
+		levelWidth := len(level.Views)*boxWidth + maxInt(0, len(level.Views)-1)*horizontalGap
+		if levelWidth > maxLevelWidth {
+			maxLevelWidth = levelWidth
+		}
+	}
+
+	placements := make(map[string]nodePlacement)
+	for _, level := range levels {
+		levelWidth := len(level.Views)*boxWidth + maxInt(0, len(level.Views)-1)*horizontalGap
+		x := (maxLevelWidth - levelWidth) / 2
+		y := level.Index * (boxHeight + verticalGap)
+
+		for _, view := range level.Views {
+			placements[view.Step.StepID] = nodePlacement{
+				View: view,
+				X:    x,
+				Y:    y,
+			}
+			x += boxWidth + horizontalGap
+		}
+	}
+
+	height := 0
+	if len(levels) > 0 {
+		height = (len(levels)-1)*(boxHeight+verticalGap) + boxHeight
+	}
+
+	return placements, maxLevelWidth, height
+}
+
+// newCanvas creates a blank ASCII canvas.
+//
+// Input
+// width int
+// Number of columns.
+//
+// height int
+// Number of rows.
+//
+// Output
+// [][]rune
+// Blank canvas filled with spaces.
+func newCanvas(width int, height int) [][]rune {
+	canvas := make([][]rune, height)
+	for row := range canvas {
+		canvas[row] = make([]rune, width)
+		for column := range canvas[row] {
+			canvas[row][column] = ' '
+		}
+	}
+
+	return canvas
+}
+
+// drawNodeBox draws one node box on the canvas.
+//
+// Input
+// canvas [][]rune
+// Canvas that receives the box.
+//
+// placement nodePlacement
+// Node position and step data.
+//
+// result attrib.AttributionResult
+// Root cause attribution result.
+//
+// Output
+// None
+func drawNodeBox(canvas [][]rune, placement nodePlacement, result attrib.AttributionResult) {
+	putString(canvas, placement.X, placement.Y, boxTop())
+	putString(canvas, placement.X, placement.Y+1, boxLine(placement.View.Step.AgentName))
+	putString(canvas, placement.X, placement.Y+2, boxLine(chartNodeStatus(placement.View, result)))
+	putString(canvas, placement.X, placement.Y+3, boxBottom())
+}
+
+// drawConnector draws one dependency connector between two boxes.
+//
+// Input
+// canvas [][]rune
+// Canvas that receives the connector.
+//
+// source nodePlacement
+// Upstream node placement.
+//
+// target nodePlacement
+// Downstream node placement.
+//
+// cause bool
+// True when the connector leaves the root cause node.
+//
+// Output
+// None
+func drawConnector(canvas [][]rune, source nodePlacement, target nodePlacement, cause bool) {
+	const boxWidth = 24
+	const boxHeight = 4
+
+	startX := source.X + boxWidth/2
+	startY := source.Y + boxHeight
+	endX := target.X + boxWidth/2
+	endY := target.Y - 1
+	steps := maxInt(1, endY-startY+1)
+
+	for step := 0; step < steps; step++ {
+		y := startY + step
+		x := startX + ((endX - startX) * step / steps)
+		mark := connectorRune(startX, endX)
+		if step == steps-1 {
+			mark = 'v'
+		}
+		if cause && mark == '|' {
+			putString(canvas, x, y, "||")
+		} else {
+			putRune(canvas, x, y, mark)
+		}
+	}
+
+	if cause {
+		labelY := startY + steps/2
+		labelX := minInt(startX, endX) + 3
+		putString(canvas, labelX, labelY, "CAUSE EDGE")
+	}
+}
+
+// connectorRune returns the connector character for one edge.
+//
+// Input
+// startX int
+// Connector start column.
+//
+// endX int
+// Connector end column.
+//
+// Output
+// rune
+// Connector character.
+func connectorRune(startX int, endX int) rune {
+	if startX < endX {
+		return '\\'
+	}
+	if startX > endX {
+		return '/'
+	}
+
+	return '|'
+}
+
+// putString writes text on the canvas.
+//
+// Input
+// canvas [][]rune
+// Canvas that receives the text.
+//
+// x int
+// Starting column.
+//
+// y int
+// Row.
+//
+// text string
+// Text to write.
+//
+// Output
+// None
+func putString(canvas [][]rune, x int, y int, text string) {
+	for offset, char := range text {
+		putRune(canvas, x+offset, y, char)
+	}
+}
+
+// putRune writes one character on the canvas.
+//
+// Input
+// canvas [][]rune
+// Canvas that receives the character.
+//
+// x int
+// Column.
+//
+// y int
+// Row.
+//
+// char rune
+// Character to write.
+//
+// Output
+// None
+func putRune(canvas [][]rune, x int, y int, char rune) {
+	if y < 0 || y >= len(canvas) {
+		return
+	}
+	if x < 0 || x >= len(canvas[y]) {
+		return
+	}
+
+	canvas[y][x] = char
+}
+
+// canvasLines converts a canvas into printable lines.
+//
+// Input
+// canvas [][]rune
+// Canvas to convert.
+//
+// Output
+// []string
+// Printable lines with trailing spaces removed.
+func canvasLines(canvas [][]rune) []string {
+	lines := make([]string, 0, len(canvas))
+
+	for _, row := range canvas {
+		lines = append(lines, strings.TrimRight(string(row), " "))
+	}
+
+	return lines
 }
 
 // graphLevelsByID computes the visual level for each node.
@@ -595,6 +868,46 @@ func fitText(text string, width int) string {
 	}
 
 	return text[:width-3] + "..."
+}
+
+// minInt returns the smaller integer.
+//
+// Input
+// left int
+// First value.
+//
+// right int
+// Second value.
+//
+// Output
+// int
+// Smaller value.
+func minInt(left int, right int) int {
+	if left < right {
+		return left
+	}
+
+	return right
+}
+
+// maxInt returns the larger integer.
+//
+// Input
+// left int
+// First value.
+//
+// right int
+// Second value.
+//
+// Output
+// int
+// Larger value.
+func maxInt(left int, right int) int {
+	if left > right {
+		return left
+	}
+
+	return right
 }
 
 // exitWithError prints an error and exits the program.
