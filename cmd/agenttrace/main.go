@@ -198,22 +198,30 @@ func checkStatusText(view stepView) string {
 // None
 func printFlowChart(views []stepView, result attrib.AttributionResult) {
 	viewsByID := stepViewByID(views)
+	extractor := viewsByID[toypipeline.ExtractorStepID]
+	reference := viewsByID[toypipeline.ReferenceStepID]
+	comparator := viewsByID[toypipeline.ComparatorStepID]
+	synthesizer := viewsByID[toypipeline.SynthesizerStepID]
 
 	fmt.Printf("Flow chart\n")
-	for _, target := range views {
-		if len(target.Step.DependsOn) == 0 {
-			continue
-		}
-
-		for _, sourceID := range target.Step.DependsOn {
-			source, exists := viewsByID[sourceID]
-			if !exists {
-				continue
-			}
-
-			fmt.Printf("%s%s%s\n", nodeText(source, result), edgeText(source.Step.StepID, result), nodeText(target, result))
-		}
-	}
+	fmt.Printf("\n")
+	fmt.Printf("%s      %s\n", boxTop(), boxTop())
+	fmt.Printf("%s      %s\n", boxLine(extractor.Step.AgentName), boxLine(reference.Step.AgentName))
+	fmt.Printf("%s      %s\n", boxLine(chartNodeStatus(extractor, result)), boxLine(chartNodeStatus(reference, result)))
+	fmt.Printf("%s      %s\n", boxBottom(), boxBottom())
+	fmt.Printf("          \\                         %s\n", referenceDownEdge(result))
+	fmt.Printf("           \\                        %s\n", referenceEdgeLabel(result))
+	fmt.Printf("            \\                       %s\n", referenceArrow(result))
+	fmt.Printf("             %s\n", boxTop())
+	fmt.Printf("             %s\n", boxLine(comparator.Step.AgentName))
+	fmt.Printf("             %s\n", boxLine(chartNodeStatus(comparator, result)))
+	fmt.Printf("             %s\n", boxBottom())
+	fmt.Printf("                       |\n")
+	fmt.Printf("                       v\n")
+	fmt.Printf("             %s\n", boxTop())
+	fmt.Printf("             %s\n", boxLine(synthesizer.Step.AgentName))
+	fmt.Printf("             %s\n", boxLine(chartNodeStatus(synthesizer, result)))
+	fmt.Printf("             %s\n", boxBottom())
 
 	if result.RootCause != nil {
 		fmt.Printf("\nMarked node: %s\n", result.RootCause.StepID)
@@ -299,6 +307,115 @@ func chartStatusText(view stepView) string {
 	}
 
 	return "PASS"
+}
+
+// chartNodeStatus formats one boxed node status for the toy flow chart.
+//
+// Input
+// view stepView
+// Display row for one trace step.
+//
+// result attrib.AttributionResult
+// Root cause attribution result.
+//
+// Output
+// string
+// Compact node status with root cause marker when applicable.
+func chartNodeStatus(view stepView, result attrib.AttributionResult) string {
+	status := chartStatusText(view)
+	if result.RootCause != nil && view.Step.StepID == result.RootCause.StepID {
+		return status + " ROOT CAUSE"
+	}
+
+	return status
+}
+
+// boxTop returns the top border for a fixed width CLI node box.
+//
+// Input
+// None
+//
+// Output
+// string
+// Top border text.
+func boxTop() string {
+	return "+----------------------+"
+}
+
+// boxBottom returns the bottom border for a fixed width CLI node box.
+//
+// Input
+// None
+//
+// Output
+// string
+// Bottom border text.
+func boxBottom() string {
+	return "+----------------------+"
+}
+
+// boxLine formats one content row for a fixed width CLI node box.
+//
+// Input
+// text string
+// Content to display inside the box.
+//
+// Output
+// string
+// Box row containing the text.
+func boxLine(text string) string {
+	return fmt.Sprintf("| %-20s |", text)
+}
+
+// referenceDownEdge formats the first cause edge row for the Reference branch.
+//
+// Input
+// result attrib.AttributionResult
+// Root cause attribution result.
+//
+// Output
+// string
+// Edge row text.
+func referenceDownEdge(result attrib.AttributionResult) string {
+	if result.RootCause != nil && result.RootCause.StepID == toypipeline.ReferenceStepID {
+		return "||"
+	}
+
+	return "/"
+}
+
+// referenceEdgeLabel formats the cause edge label for the Reference branch.
+//
+// Input
+// result attrib.AttributionResult
+// Root cause attribution result.
+//
+// Output
+// string
+// Edge label text.
+func referenceEdgeLabel(result attrib.AttributionResult) string {
+	if result.RootCause != nil && result.RootCause.StepID == toypipeline.ReferenceStepID {
+		return "|| CAUSE EDGE"
+	}
+
+	return "/"
+}
+
+// referenceArrow formats the final Reference branch arrow row.
+//
+// Input
+// result attrib.AttributionResult
+// Root cause attribution result.
+//
+// Output
+// string
+// Arrow row text.
+func referenceArrow(result attrib.AttributionResult) string {
+	if result.RootCause != nil && result.RootCause.StepID == toypipeline.ReferenceStepID {
+		return "vv"
+	}
+
+	return "v"
 }
 
 // exitWithError prints an error and exits the program.
