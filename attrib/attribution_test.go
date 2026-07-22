@@ -131,6 +131,66 @@ func TestFindRootCauseReturnsCheckerErrorWithStepID(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsValidGraphAndCheckerCoverage(t *testing.T) {
+	trace := attrib.Trace{
+		Steps: []attrib.Step{
+			{StepID: "source"},
+			{StepID: "final", DependsOn: []string{"source"}},
+		},
+	}
+	checkers := map[string]attrib.StepChecker{
+		"source": func(attrib.Step) (attrib.CheckResult, error) { return attrib.Pass(), nil },
+		"final":  func(attrib.Step) (attrib.CheckResult, error) { return attrib.Pass(), nil },
+	}
+
+	if err := attrib.Validate(trace, checkers); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+}
+
+func TestValidateRejectsInvalidDependencyGraph(t *testing.T) {
+	trace := attrib.Trace{
+		Steps: []attrib.Step{
+			{StepID: "source", DependsOn: []string{"missing"}},
+		},
+	}
+
+	err := attrib.Validate(trace, map[string]attrib.StepChecker{})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), `step "source" depends on unknown step "missing"`) {
+		t.Fatalf("unexpected error %q", err)
+	}
+}
+
+func TestValidateRejectsMissingCheckerWithoutEvaluation(t *testing.T) {
+	trace := attrib.Trace{
+		Steps: []attrib.Step{
+			{StepID: "source"},
+			{StepID: "final", DependsOn: []string{"source"}},
+		},
+	}
+	called := false
+	checkers := map[string]attrib.StepChecker{
+		"source": func(attrib.Step) (attrib.CheckResult, error) {
+			called = true
+			return attrib.Pass(), nil
+		},
+	}
+
+	err := attrib.Validate(trace, checkers)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), `missing checker for step "final"`) {
+		t.Fatalf("unexpected error %q", err)
+	}
+	if called {
+		t.Fatal("expected validation not to evaluate checkers")
+	}
+}
+
 func checkerThatRecords(called *[]string, passed bool, reason string) attrib.StepChecker {
 	return func(step attrib.Step) (attrib.CheckResult, error) {
 		*called = append(*called, step.StepID)

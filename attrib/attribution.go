@@ -28,12 +28,8 @@ func FindRootCause(trace Trace, checkers map[string]StepChecker) (AttributionRes
 		return AttributionResult{}, err
 	}
 
-	// Validate complete checker coverage before treating any result as attribution.
-	for _, step := range orderedSteps {
-		checker, exists := checkers[step.StepID]
-		if !exists || checker == nil {
-			return AttributionResult{}, fmt.Errorf("missing checker for step %q", step.StepID)
-		}
+	if err := validateCheckerCoverage(orderedSteps, checkers); err != nil {
+		return AttributionResult{}, err
 	}
 
 	result := AttributionResult{
@@ -63,6 +59,50 @@ func FindRootCause(trace Trace, checkers map[string]StepChecker) (AttributionRes
 	}
 
 	return result, nil
+}
+
+// Validate checks a trace dependency graph and its checker coverage without evaluating checkers.
+//
+// Input
+// trace Trace
+// Trace containing the dependency graph to validate.
+//
+// checkers map[string]StepChecker
+// Step checker functions keyed by step ID.
+//
+// Output
+// error
+// Non nil when the graph is invalid or a step has no checker.
+func Validate(trace Trace, checkers map[string]StepChecker) error {
+	orderedSteps, err := TopologicalSort(trace)
+	if err != nil {
+		return err
+	}
+
+	return validateCheckerCoverage(orderedSteps, checkers)
+}
+
+// validateCheckerCoverage confirms that every ordered step has a checker function.
+//
+// Input
+// orderedSteps []Step
+// Steps in dependency order.
+//
+// checkers map[string]StepChecker
+// Step checker functions keyed by step ID.
+//
+// Output
+// error
+// Non nil when a step has no checker function.
+func validateCheckerCoverage(orderedSteps []Step, checkers map[string]StepChecker) error {
+	for _, step := range orderedSteps {
+		checker, exists := checkers[step.StepID]
+		if !exists || checker == nil {
+			return fmt.Errorf("missing checker for step %q", step.StepID)
+		}
+	}
+
+	return nil
 }
 
 func Pass() CheckResult {
