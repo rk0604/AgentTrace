@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -61,7 +62,17 @@ func TestCheckedInFixturesMatchGenerator(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read checked in fixture %q: %v", name, err)
 		}
-		if !bytes.Equal(generated, checkedIn) {
+
+		// Compact both documents so platform line endings do not affect the comparison.
+		var generatedJSON bytes.Buffer
+		if err := json.Compact(&generatedJSON, generated); err != nil {
+			t.Fatalf("compact generated fixture %q: %v", name, err)
+		}
+		var checkedInJSON bytes.Buffer
+		if err := json.Compact(&checkedInJSON, checkedIn); err != nil {
+			t.Fatalf("compact checked in fixture %q: %v", name, err)
+		}
+		if !bytes.Equal(generatedJSON.Bytes(), checkedInJSON.Bytes()) {
 			t.Fatalf("checked in fixture %q is stale", name)
 		}
 	}
