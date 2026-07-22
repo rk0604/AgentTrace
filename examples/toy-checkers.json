@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "steps": {
+    "extractor": {
+      "expression": "output.revenue == \"$4.2M\" && output.period == \"Q1\"",
+      "failure_reason": "Extractor returned the wrong revenue or period"
+    },
+    "reference": {
+      "expression": "output.revenue == \"$4.2M\" && output.period == \"Q2\"",
+      "failure_reason": "Reference misread the reporting period"
+    },
+    "comparator": {
+      "expression": "output.result == (input.extractor == input.reference ? \"MATCH\" : \"MISMATCH\")",
+      "failure_reason": "Comparator verdict does not match its actual inputs"
+    },
+    "synthesizer": {
+      "expression": "output.answer == (input.result == \"MATCH\" ? \"The press release and reference agree.\" : \"The press release and reference disagree.\")",
+      "failure_reason": "Synthesizer answer does not represent its input verdict"
+    }
+  }
+}

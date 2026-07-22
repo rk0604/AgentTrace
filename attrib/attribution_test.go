@@ -87,6 +87,33 @@ func TestFindRootCauseReturnsErrorForMissingChecker(t *testing.T) {
 	}
 }
 
+func TestFindRootCauseValidatesAllCheckersBeforeEvaluation(t *testing.T) {
+	trace := attrib.Trace{
+		Steps: []attrib.Step{
+			{StepID: "source"},
+			{StepID: "final", DependsOn: []string{"source"}},
+		},
+	}
+	called := false
+	checkers := map[string]attrib.StepChecker{
+		"source": func(attrib.Step) (attrib.CheckResult, error) {
+			called = true
+			return attrib.Fail("source failed"), nil
+		},
+	}
+
+	_, err := attrib.FindRootCause(trace, checkers)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), `missing checker for step "final"`) {
+		t.Fatalf("unexpected error %q", err)
+	}
+	if called {
+		t.Fatal("expected checker validation before evaluation")
+	}
+}
+
 func TestFindRootCauseReturnsCheckerErrorWithStepID(t *testing.T) {
 	trace := attrib.Trace{Steps: []attrib.Step{{StepID: "source"}}}
 	checkers := map[string]attrib.StepChecker{

@@ -28,6 +28,14 @@ func FindRootCause(trace Trace, checkers map[string]StepChecker) (AttributionRes
 		return AttributionResult{}, err
 	}
 
+	// Validate complete checker coverage before treating any result as attribution.
+	for _, step := range orderedSteps {
+		checker, exists := checkers[step.StepID]
+		if !exists || checker == nil {
+			return AttributionResult{}, fmt.Errorf("missing checker for step %q", step.StepID)
+		}
+	}
+
 	result := AttributionResult{
 		RunID:          trace.RunID,
 		Status:         "passed",
@@ -35,10 +43,7 @@ func FindRootCause(trace Trace, checkers map[string]StepChecker) (AttributionRes
 	}
 
 	for _, step := range orderedSteps {
-		checker, ok := checkers[step.StepID]
-		if !ok {
-			return AttributionResult{}, fmt.Errorf("missing checker for step %q", step.StepID)
-		}
+		checker := checkers[step.StepID]
 
 		check, err := checker(step)
 		if err != nil {
