@@ -72,6 +72,15 @@ func Run(failureMode FailureMode) (attrib.Trace, error) {
 	return attrib.Trace{RunID: runID, Steps: steps}, nil
 }
 
+// validateFailureMode checks whether a failure mode is supported.
+//
+// Input
+// failureMode FailureMode
+// Failure mode requested for an incident trace.
+//
+// Output
+// error
+// Non nil when the failure mode is unsupported.
 func validateFailureMode(failureMode FailureMode) error {
 	switch failureMode {
 	case FailureNone, FailureMetrics, FailureDeployment:
@@ -81,10 +90,46 @@ func validateFailureMode(failureMode FailureMode) error {
 	}
 }
 
+// runIDForMode creates a deterministic run ID for one failure mode.
+//
+// Input
+// failureMode FailureMode
+// Failure mode represented by the trace.
+//
+// Output
+// string
+// Stable incident trace run ID.
 func runIDForMode(failureMode FailureMode) string {
 	return "incident-investigation-" + string(failureMode)
 }
 
+// newStep creates one generic trace step from domain payloads.
+//
+// Input
+// runID string
+// Trace run ID.
+//
+// stepID string
+// Unique step ID.
+//
+// agentName string
+// Human readable agent name.
+//
+// dependsOn []string
+// Step IDs that produced the input data.
+//
+// input any
+// Domain input encoded into JSON.
+//
+// output any
+// Domain output encoded into JSON.
+//
+// timestamp time.Time
+// Deterministic step timestamp.
+//
+// Output
+// attrib.Step
+// Generic step containing raw JSON payloads.
 func newStep(runID string, stepID string, agentName string, dependsOn []string, input any, output any, timestamp time.Time) attrib.Step {
 	return attrib.Step{
 		RunID:     runID,
@@ -99,6 +144,15 @@ func newStep(runID string, stepID string, agentName string, dependsOn []string, 
 	}
 }
 
+// mustRaw encodes one domain value as raw JSON.
+//
+// Input
+// value any
+// Domain value to encode.
+//
+// Output
+// json.RawMessage
+// Encoded JSON payload.
 func mustRaw(value any) json.RawMessage {
 	raw, err := json.Marshal(value)
 	if err != nil {

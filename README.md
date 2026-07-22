@@ -95,3 +95,46 @@ go run ./cmd/agenttrace `
 When `--checkers` is omitted, the CLI keeps using `toypipeline.Checkers()` for
 the original built in demonstration. The `attrib` package remains unaware of
 CEL and domain specific payload fields.
+
+## Run the incident investigation demo
+
+The incident demo models a checkout outage investigation with thirteen steps.
+Log, metrics, deployment, and runbook agents branch in parallel before their
+evidence is merged into a timeline, hypothesis, impact assessment, remediation
+plan, and final incident summary.
+
+Run the healthy investigation:
+
+```powershell
+go run ./cmd/agenttrace `
+  --input ./examples/incident-healthy.json `
+  --checkers ./examples/incident-checkers.json
+```
+
+Inject a Metrics Analyzer failure:
+
+```powershell
+go run ./cmd/agenttrace `
+  --input ./examples/incident-metrics-failure.json `
+  --checkers ./examples/incident-checkers.json
+```
+
+Inject a Deployment Analyzer failure and print only JSON:
+
+```powershell
+go run ./cmd/agenttrace `
+  --input ./examples/incident-deployment-failure.json `
+  --checkers ./examples/incident-checkers.json `
+  --json
+```
+
+The downstream agents deliberately continue from the evidence they actually
+receive. Their outputs can therefore be wrong in the real world while remaining
+correct transformations of bad upstream input. AgentTrace attributes the first
+divergence to the analyzer that introduced the bad evidence.
+
+Regenerate the three incident trace fixtures after changing the demo agents:
+
+```powershell
+go run ./cmd/incidentfixtures --output ./examples
+```
