@@ -36,10 +36,23 @@ type nodePlacement struct {
 
 func main() {
 	healthy := flag.Bool("healthy", false, "run the toy pipeline without the injected reference failure")
+	inputPath := flag.String("input", "", "read a trace from a JSON file instead of running the toy pipeline")
+	jsonOutput := flag.Bool("json", false, "write only the JSON attribution result to standard output")
+	outputPath := flag.String("output", "", "write the JSON attribution result to a file")
 	flag.Parse()
 
-	// Build the deterministic toy trace.
-	trace := toypipeline.Run(!*healthy)
+	if *inputPath != "" && *healthy {
+		exitWithError(fmt.Errorf("healthy cannot be used with input"))
+	}
+	if *jsonOutput && *outputPath != "" {
+		exitWithError(fmt.Errorf("json and output cannot be used together"))
+	}
+
+	// Build a deterministic trace or decode one from JSON.
+	trace, err := loadTrace(*inputPath, !*healthy)
+	if err != nil {
+		exitWithError(err)
+	}
 	checkers := toypipeline.Checkers()
 
 	// Compute dependency order from DependsOn.
@@ -53,9 +66,90 @@ func main() {
 	if err != nil {
 		exitWithError(err)
 	}
+	if *jsonOutput {
+		if err := attrib.EncodeResult(os.Stdout, result); err != nil {
+			exitWithError(err)
+		}
+		return
+	}
+	if *outputPath != "" {
+		if err := writeResultFile(*outputPath, result); err != nil {
+			exitWithError(err)
+		}
+	}
 
 	stepViews := buildStepViews(orderedSteps, result, checkers)
 	printReport(trace, stepViews, result)
+	if *outputPath != "" {
+		fmt.Printf("\nJSON result written to %s\n", *outputPath)
+	}
+}
+
+// loadTrace creates the toy trace or reads one from a JSON file.
+//
+// Input
+// inputPath string
+// JSON file path. An empty path selects the generated toy trace.
+//
+// injectReferenceFailure bool
+// True when the generated toy trace should contain the Reference failure.
+//
+// Output
+// attrib.Trace
+// The generated or decoded trace.
+//
+// error
+// Non nil when the JSON file cannot be opened, decoded, or closed.
+func loadTrace(inputPath string, injectReferenceFailure bool) (attrib.Trace, error) {
+	if inputPath == "" {
+		return toypipeline.Run(injectReferenceFailure), nil
+	}
+
+	file, err := os.Open(inputPath)
+	if err != nil {
+		return attrib.Trace{}, fmt.Errorf("open trace file: %w", err)
+	}
+
+	trace, decodeErr := attrib.DecodeTrace(file)
+	closeErr := file.Close()
+	if decodeErr != nil {
+		return attrib.Trace{}, decodeErr
+	}
+	if closeErr != nil {
+		return attrib.Trace{}, fmt.Errorf("close trace file: %w", closeErr)
+	}
+
+	return trace, nil
+}
+
+// writeResultFile writes an attribution result as JSON.
+//
+// Input
+// outputPath string
+// Destination JSON file path.
+//
+// result attrib.AttributionResult
+// Attribution result to write.
+//
+// Output
+// error
+// Non nil when the file cannot be created, encoded, or closed.
+func writeResultFile(outputPath string, result attrib.AttributionResult) error {
+	file, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("create result file: %w", err)
+	}
+
+	encodeErr := attrib.EncodeResult(file, result)
+	closeErr := file.Close()
+	if encodeErr != nil {
+		return encodeErr
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close result file: %w", closeErr)
+	}
+
+	return nil
 }
 
 // buildStepViews creates display rows for the CLI graph report.
@@ -135,7 +229,7 @@ func checkedStepSet(stepIDs []string) map[string]bool {
 // Output
 // None
 func printReport(trace attrib.Trace, views []stepView, result attrib.AttributionResult) {
-	fmt.Printf("AgentTrace toy run\n")
+	fmt.Printf("AgentTrace run\n")
 	fmt.Printf("Run ID: %s\n\n", trace.RunID)
 
 	fmt.Printf("Dependency ordered steps\n")

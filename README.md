@@ -42,3 +42,31 @@ To run all tests:
 ```powershell
 go test ./...
 ```
+
+## Run a JSON trace
+
+The example files contain complete traces with real JSON objects inside each
+step's `input` and `output` fields. The CLI decodes those objects into
+`json.RawMessage`, then the toy pipeline checkers interpret their domain data.
+
+Print a human readable report and graph from a JSON trace:
+
+```powershell
+go run ./cmd/agenttrace --input ./examples/trace-reference-failure.json
+```
+
+Print only the machine readable JSON attribution result:
+
+```powershell
+go run ./cmd/agenttrace --input ./examples/trace-reference-failure.json --json
+```
+
+Write the JSON result to a file while still printing the human readable report:
+
+```powershell
+go run ./cmd/agenttrace --input ./examples/trace-reference-failure.json --output ./result.json
+```
+
+The current CLI uses `toypipeline.Checkers()`, so input files must use the toy
+step IDs and payload formats. The `attrib` package itself remains generic and
+accepts any DAG and any JSON payload when supplied with matching checkers.

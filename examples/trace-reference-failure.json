@@ -1,0 +1,79 @@
+{
+  "run_id": "toy-reference-period-failure",
+  "steps": [
+    {
+      "run_id": "toy-reference-period-failure",
+      "step_id": "extractor",
+      "agent_name": "Extractor",
+      "depends_on": [],
+      "input": {
+        "document": "Acme reported revenue of $4.2M for Q1."
+      },
+      "output": {
+        "revenue": "$4.2M",
+        "period": "Q1"
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-06T12:00:00Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "toy-reference-period-failure",
+      "step_id": "reference",
+      "agent_name": "Reference",
+      "depends_on": [],
+      "input": {
+        "document": "Acme reported revenue of $4.2M for the three months ended June 30."
+      },
+      "output": {
+        "revenue": "$4.2M",
+        "period": "Q1"
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-06T12:00:01Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "toy-reference-period-failure",
+      "step_id": "comparator",
+      "agent_name": "Comparator",
+      "depends_on": [
+        "extractor",
+        "reference"
+      ],
+      "input": {
+        "extractor": {
+          "revenue": "$4.2M",
+          "period": "Q1"
+        },
+        "reference": {
+          "revenue": "$4.2M",
+          "period": "Q1"
+        }
+      },
+      "output": {
+        "result": "MATCH"
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-06T12:00:02Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "toy-reference-period-failure",
+      "step_id": "synthesizer",
+      "agent_name": "Synthesizer",
+      "depends_on": [
+        "comparator"
+      ],
+      "input": {
+        "result": "MATCH"
+      },
+      "output": {
+        "answer": "The press release and reference agree."
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-06T12:00:03Z",
+      "status": "ok"
+    }
+  ]
+}
