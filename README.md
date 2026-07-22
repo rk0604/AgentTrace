@@ -1,43 +1,77 @@
 # AgentTrace
 
-AgentTrace is set up for parallel AI-assisted development with a stable `main`
-branch and separate agent workstreams.
+AgentTrace is a Go CLI for finding the earliest source of failure in an AI agent
+pipeline. It reads a completed pipeline trace, orders the steps by dependency,
+evaluates each step with developer supplied correctness rules, and reports the
+first step that produced an incorrect output.
 
-## Branch model
+This matters when a bad value travels through several agents before it becomes
+visible. A downstream agent may behave correctly given its inputs even when the
+final answer is wrong. AgentTrace follows data lineage so the original upstream
+failure receives the attribution.
 
-- `main`: production-ready baseline. Merge here only after review and tests.
-- `agent/codex`: Codex working branch.
-- `agent/claude`: Claude Code working branch.
-- `feature/<name>`: optional short-lived branches for focused work.
+## What AgentTrace does
 
-## Recommended workflow
+1. Reads a pipeline trace from JSON.
+2. Validates step IDs and dependencies.
+3. Topologically sorts the dependency graph.
+4. Evaluates each step with a CEL correctness expression.
+5. Stops at the first failing step.
+6. Prints a report and an ASCII dependency graph with the cause marked.
 
-1. Keep `main` clean and deployable.
-2. Do Codex work in the Codex worktree/branch.
-3. Do Claude Code work in the Claude worktree/branch.
-4. Merge finished work back through pull requests or reviewed local merges.
-5. Rebase or merge `main` into each agent branch regularly to reduce drift.
+AgentTrace is intentionally focused. It does not orchestrate agents, call
+models, store run history, or provide a dashboard. LangGraph builds workflows
+and Langfuse observes LLM applications. AgentTrace analyzes an already completed
+trace to answer one question: which step first introduced the bad result?
 
-## CLI commands
+## Requirements
 
-From the Codex worktree:
+- Go 1.26.3 or newer
+- Git
+
+Check the installed Go version:
 
 ```powershell
-cd C:\Users\Risha\Desktop\AgentTrace-codex
+go version
 ```
 
-AgentTrace has three explicit commands:
+## Setup
 
-- `run` attributes a JSON trace using a JSON CEL checker configuration.
-- `validate` validates both files without evaluating the checkers.
-- `demo` runs a built in toy or incident scenario.
+Clone the repository and download its Go dependencies:
 
-Running the CLI without a command returns an error instead of silently selecting
-a demonstration.
+```powershell
+git clone https://github.com/rk0604/AgentTrace.git
+cd AgentTrace
+go mod download
+```
 
-## Run a JSON trace
+## Quick start
 
-The normal run mode always requires both `--input` and `--checkers`:
+Run the small four step demo with an injected Reference failure:
+
+```powershell
+go run ./cmd/agenttrace demo toy
+```
+
+Run the same pipeline in healthy mode:
+
+```powershell
+go run ./cmd/agenttrace demo toy --healthy
+```
+
+Run the larger incident investigation demo. The available failure modes are
+`none`, `metrics`, and `deployment`:
+
+```powershell
+go run ./cmd/agenttrace demo incident --failure metrics
+```
+
+Each demo prints the dependency ordered steps, the attribution result, and a
+flow chart that marks the root cause node and its outgoing cause edge.
+
+## Analyze a JSON trace
+
+The `run` command requires a trace file and a checker configuration:
 
 ```powershell
 go run ./cmd/agenttrace run `
@@ -45,11 +79,7 @@ go run ./cmd/agenttrace run `
   --checkers ./examples/toy-checkers.json
 ```
 
-The example trace contains real JSON objects inside each step's `input` and
-`output` fields. The CLI decodes those objects into `json.RawMessage`, compiles
-the CEL expressions, runs first divergence attribution, and prints the graph.
-
-Print only the machine readable JSON attribution result:
+Return only the machine readable JSON result:
 
 ```powershell
 go run ./cmd/agenttrace run `
@@ -58,7 +88,7 @@ go run ./cmd/agenttrace run `
   --json
 ```
 
-Write the JSON result to a file while still printing the human readable report:
+Write the JSON result to a file while keeping the human readable report:
 
 ```powershell
 go run ./cmd/agenttrace run `
@@ -67,11 +97,12 @@ go run ./cmd/agenttrace run `
   --output ./result.json
 ```
 
-## Validate configuration
+The `--json` and `--output` options cannot be used together.
 
-The `validate` command decodes the trace, compiles every CEL expression, checks
-the dependency graph, and confirms that every step has a checker. It does not
-evaluate the checkers or produce an attribution result.
+## Validate inputs
+
+Validate the trace structure, dependency graph, CEL expressions, and checker
+coverage without running attribution:
 
 ```powershell
 go run ./cmd/agenttrace validate `
@@ -79,79 +110,124 @@ go run ./cmd/agenttrace validate `
   --checkers ./examples/toy-checkers.json
 ```
 
-## Run the toy demo
+A valid configuration prints `Validation passed` with its run, step, and checker
+counts.
 
-Run the four step pipeline with the injected Reference failure:
+## Trace format
 
-```powershell
-go run ./cmd/agenttrace demo toy
+A trace contains a run ID and a list of steps. `depends_on` describes data
+lineage, not the order in which agents happened to run. Domain specific values
+belong inside `input` and `output` JSON objects.
+
+```json
+{
+  "run_id": "example-run",
+  "steps": [
+    {
+      "run_id": "example-run",
+      "step_id": "extractor",
+      "agent_name": "Extractor",
+      "depends_on": [],
+      "input": {"document": "Example source text"},
+      "output": {"value": "example"},
+      "model_used": "model-name",
+      "confidence": 0.95,
+      "timestamp": "2026-07-21T12:00:00Z",
+      "status": "ok"
+    }
+  ]
+}
 ```
 
-Run the same pipeline without the failure:
+`confidence` is optional. Step IDs must be unique, every dependency must exist,
+and the graph must not contain a cycle.
 
-```powershell
-go run ./cmd/agenttrace demo toy --healthy
+## Checker format
+
+Correctness rules are stored separately from the trace as versioned CEL
+expressions keyed by step ID:
+
+```json
+{
+  "version": 1,
+  "steps": {
+    "extractor": {
+      "expression": "output.value == \"example\"",
+      "failure_reason": "Extractor returned the wrong value"
+    }
+  }
+}
 ```
 
-To run all tests:
+Each expression must return a Boolean value. It can inspect:
+
+- `input`, the step input JSON object
+- `output`, the step output JSON object
+- `step`, generic metadata such as `step_id`, `agent_name`, and `status`
+
+The checker should return `true` when the step behaved correctly given its
+actual inputs. This distinction prevents a downstream step from being blamed
+for faithfully processing incorrect upstream data. Every trace step must have a
+matching checker.
+
+See [examples/toy-checkers.json](examples/toy-checkers.json) and
+[examples/incident-checkers.json](examples/incident-checkers.json) for complete
+configurations.
+
+## Testing
+
+Run the complete test suite:
 
 ```powershell
 go test ./...
 ```
 
-## Configure correctness checks
-
-A checker configuration maps each trace step ID to a CEL expression. The
-expression receives three generic variables:
-
-- `input`: the step's JSON input.
-- `output`: the step's JSON output.
-- `step`: generic metadata such as `step_id`, `agent_name`, and `status`.
-
-Each expression must return `true` when the step behaved correctly given its
-actual input, or `false` when that step is the first source of bad data. The
-configured failure reason is included in the attribution result.
-
-The `attrib` package remains unaware of CEL and domain specific payload fields.
-Only the checker configuration interprets the JSON payloads.
-
-## Run the incident investigation demo
-
-The incident demo models a checkout outage investigation with thirteen steps.
-Log, metrics, deployment, and runbook agents branch in parallel before their
-evidence is merged into a timeline, hypothesis, impact assessment, remediation
-plan, and final incident summary.
-
-Run the healthy investigation demo:
+Run static analysis:
 
 ```powershell
-go run ./cmd/agenttrace demo incident --failure none
+go vet ./...
 ```
 
-Inject a Metrics Analyzer failure. This is the default incident mode:
+Run tests for one package:
 
 ```powershell
-go run ./cmd/agenttrace demo incident --failure metrics
+go test ./attrib
+go test ./checkerconfig
+go test ./toypipeline
+go test ./incidentdemo
 ```
 
-Inject a Deployment Analyzer failure and print only JSON:
+Run one named test with verbose output:
 
 ```powershell
-go run ./cmd/agenttrace demo incident `
-  --failure deployment `
-  --json
+go test ./toypipeline -run TestReferenceFailureIsRootCause -v
 ```
 
-The incident demo loads `./examples/incident-checkers.json` by default. A
-different configuration can be selected with `--checkers`.
+## Project structure
 
-The downstream agents deliberately continue from the evidence they actually
-receive. Their outputs can therefore be wrong in the real world while remaining
-correct transformations of bad upstream input. AgentTrace attributes the first
-divergence to the analyzer that introduced the bad evidence.
+```text
+attrib              Generic trace schema, DAG sorting, validation, and attribution
+checkerconfig       JSON checker configuration and CEL evaluation
+cmd/agenttrace      Main command line application
+cmd/incidentfixtures Incident fixture generator
+examples            Example traces and checker configurations
+incidentdemo        Complex incident investigation pipeline
+toypipeline         Small deterministic demonstration pipeline
+```
 
-Regenerate the three incident trace fixtures after changing the demo agents:
+The generic `attrib` package has no finance or incident specific fields. Domain
+meaning remains inside JSON payloads and external checker rules.
+
+## Regenerate incident fixtures
+
+After changing the incident demo agents, regenerate its example traces:
 
 ```powershell
 go run ./cmd/incidentfixtures --output ./examples
 ```
+
+## Development workflow
+
+`main` is the stable branch. Codex work is developed on `agent/codex`, and Claude
+Code work is developed on `agent/claude`. Keep each agent in its own worktree,
+run the relevant tests, and merge reviewed changes into `main`.
