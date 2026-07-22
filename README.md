@@ -58,7 +58,10 @@ go run ./cmd/agenttrace --input ./examples/trace-reference-failure.json
 Print only the machine readable JSON attribution result:
 
 ```powershell
-go run ./cmd/agenttrace --input ./examples/trace-reference-failure.json --json
+go run ./cmd/agenttrace `
+  --input ./examples/trace-reference-failure.json `
+  --checkers ./examples/toy-checkers.json `
+  --json
 ```
 
 Write the JSON result to a file while still printing the human readable report:
@@ -67,6 +70,28 @@ Write the JSON result to a file while still printing the human readable report:
 go run ./cmd/agenttrace --input ./examples/trace-reference-failure.json --output ./result.json
 ```
 
-The current CLI uses `toypipeline.Checkers()`, so input files must use the toy
-step IDs and payload formats. The `attrib` package itself remains generic and
-accepts any DAG and any JSON payload when supplied with matching checkers.
+## Configure correctness checks
+
+A checker configuration maps each trace step ID to a CEL expression. The
+expression receives three generic variables:
+
+- `input`: the step's JSON input.
+- `output`: the step's JSON output.
+- `step`: generic metadata such as `step_id`, `agent_name`, and `status`.
+
+Each expression must return `true` when the step behaved correctly given its
+actual input, or `false` when that step is the first source of bad data. The
+configured failure reason is included in the attribution result.
+
+Run the complete generic JSON flow:
+
+```powershell
+go run ./cmd/agenttrace `
+  --input ./examples/trace-reference-failure.json `
+  --checkers ./examples/toy-checkers.json `
+  --output ./result.json
+```
+
+When `--checkers` is omitted, the CLI keeps using `toypipeline.Checkers()` for
+the original built in demonstration. The `attrib` package remains unaware of
+CEL and domain specific payload fields.

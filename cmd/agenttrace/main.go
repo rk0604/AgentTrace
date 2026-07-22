@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/rk0604/AgentTrace/attrib"
+	"github.com/rk0604/AgentTrace/checkerconfig"
 	"github.com/rk0604/AgentTrace/toypipeline"
 )
 
@@ -37,6 +38,7 @@ type nodePlacement struct {
 func main() {
 	healthy := flag.Bool("healthy", false, "run the toy pipeline without the injected reference failure")
 	inputPath := flag.String("input", "", "read a trace from a JSON file instead of running the toy pipeline")
+	checkersPath := flag.String("checkers", "", "read CEL step checkers from a JSON configuration file")
 	jsonOutput := flag.Bool("json", false, "write only the JSON attribution result to standard output")
 	outputPath := flag.String("output", "", "write the JSON attribution result to a file")
 	flag.Parse()
@@ -53,7 +55,10 @@ func main() {
 	if err != nil {
 		exitWithError(err)
 	}
-	checkers := toypipeline.Checkers()
+	checkers, err := loadCheckers(*checkersPath)
+	if err != nil {
+		exitWithError(err)
+	}
 
 	// Compute dependency order from DependsOn.
 	orderedSteps, err := attrib.TopologicalSort(trace)
@@ -83,6 +88,40 @@ func main() {
 	if *outputPath != "" {
 		fmt.Printf("\nJSON result written to %s\n", *outputPath)
 	}
+}
+
+// loadCheckers creates toy checkers or reads CEL checkers from a JSON file.
+//
+// Input
+// checkersPath string
+// Checker configuration file path. An empty path selects the toy Go checkers.
+//
+// Output
+// map[string]attrib.StepChecker
+// Step checker functions keyed by step ID.
+//
+// error
+// Non nil when the file cannot be opened, decoded, compiled, or closed.
+func loadCheckers(checkersPath string) (map[string]attrib.StepChecker, error) {
+	if checkersPath == "" {
+		return toypipeline.Checkers(), nil
+	}
+
+	file, err := os.Open(checkersPath)
+	if err != nil {
+		return nil, fmt.Errorf("open checker configuration: %w", err)
+	}
+
+	config, decodeErr := checkerconfig.Decode(file)
+	closeErr := file.Close()
+	if decodeErr != nil {
+		return nil, decodeErr
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close checker configuration: %w", closeErr)
+	}
+
+	return checkerconfig.Build(config)
 }
 
 // loadTrace creates the toy trace or reads one from a JSON file.
