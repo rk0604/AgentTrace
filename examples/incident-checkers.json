@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "steps": {
+    "incident_intake": {
+      "expression": "output.incident_id == input.incident_id && output.service == input.service && output.started_at == input.started_at && output.symptom == input.symptom && output.accepted",
+      "failure_reason": "Incident Intake did not preserve the submitted incident"
+    },
+    "investigation_planner": {
+      "expression": "output.incident_id == input.incident_id && output.service == input.service && output.tasks == [\"analyze_logs\", \"analyze_metrics\", \"analyze_deployments\", \"load_runbook\"]",
+      "failure_reason": "Investigation Planner produced an incomplete investigation plan"
+    },
+    "log_analyzer": {
+      "expression": "output.service == input.service && output.error_code == input.logs[0].error_code && output.error_count == 2.0 && output.first_error_at == input.logs[0].timestamp",
+      "failure_reason": "Log Analyzer misread the service error records"
+    },
+    "metrics_analyzer": {
+      "expression": "output.observed_at == input.metrics.observed_at && output.p95_latency_ms == input.metrics.p95_latency_ms && output.threshold_ms == input.metrics.threshold_ms && output.error_rate == input.metrics.error_rate && output.state == (input.metrics.p95_latency_ms > input.metrics.threshold_ms ? \"critical\" : \"normal\")",
+      "failure_reason": "Metrics Analyzer misclassified the latency threshold breach"
+    },
+    "deployment_analyzer": {
+      "expression": "output.deployment_id == input.deployments[1].deployment_id && output.commit == input.deployments[1].commit && output.deployed_at == input.deployments[1].deployed_at && output.changed_field == \"request_timeout_seconds\" && output.before_value == input.deployments[1].timeout_before_seconds && output.after_value == input.deployments[1].timeout_after_seconds && output.correlated",
+      "failure_reason": "Deployment Analyzer selected the wrong deployment"
+    },
+    "runbook_loader": {
+      "expression": "output.runbook_id == input.runbook.runbook_id && output.signal == input.runbook.signal && output.cause == input.runbook.cause && output.recommended_action == input.runbook.recommended_action && output.loaded",
+      "failure_reason": "Runbook Loader did not load the supplied runbook"
+    },
+    "evidence_merger": {
+      "expression": "output.service == input.logs.service && output.error_code == input.logs.error_code && output.error_count == input.logs.error_count && output.first_error_at == input.logs.first_error_at && output.metric_state == input.metrics.state && output.p95_latency_ms == input.metrics.p95_latency_ms && output.threshold_ms == input.metrics.threshold_ms && output.metric_observed_at == input.metrics.observed_at && output.deployment_id == input.deployment.deployment_id && output.deployment_at == input.deployment.deployed_at && output.deployment_correlated == input.deployment.correlated",
+      "failure_reason": "Evidence Merger did not faithfully combine its actual inputs"
+    },
+    "timeline_builder": {
+      "expression": "output.deployment_id == input.deployment_id && output.deployment_at == input.deployment_at && output.first_error_at == input.first_error_at && output.metric_observed_at == input.metric_observed_at && output.ordered == (input.deployment_at < input.first_error_at && input.first_error_at < input.metric_observed_at)",
+      "failure_reason": "Timeline Builder ordered the evidence incorrectly"
+    },
+    "hypothesis_generator": {
+      "expression": "output.cause == (input.evidence.metric_state == \"critical\" && input.evidence.deployment_correlated && input.evidence.error_code == \"REQUEST_TIMEOUT\" ? \"timeout_regression\" : (input.evidence.metric_state != \"critical\" ? \"application_error\" : \"traffic_spike\")) && output.confidence == (input.evidence.metric_state == \"critical\" && input.evidence.deployment_correlated && input.evidence.error_code == \"REQUEST_TIMEOUT\" ? \"high\" : \"medium\")",
+      "failure_reason": "Hypothesis Generator produced a conclusion inconsistent with its actual evidence"
+    },
+    "impact_assessor": {
+      "expression": "output.severity == (input.hypothesis.confidence == \"high\" && input.evidence.error_count >= 2.0 ? \"SEV1\" : \"SEV2\") && output.affected_service == input.evidence.service && output.customer_impact == (input.hypothesis.confidence == \"high\" && input.evidence.error_count >= 2.0 ? \"checkout requests are failing for customers\" : \"degraded checkout performance\")",
+      "failure_reason": "Impact Assessor produced an impact inconsistent with the evidence"
+    },
+    "runbook_matcher": {
+      "expression": "output.runbook_id == input.runbook.runbook_id && output.applicable == (input.runbook.loaded && input.runbook.cause == input.hypothesis.cause) && output.action == (input.runbook.loaded && input.runbook.cause == input.hypothesis.cause ? input.runbook.recommended_action : \"collect additional evidence\")",
+      "failure_reason": "Runbook Matcher selected an action inconsistent with the hypothesis"
+    },
+    "remediation_planner": {
+      "expression": "output.cause == input.hypothesis.cause && output.priority == input.impact.severity && output.action == input.runbook.action && output.owner == \"checkout-on-call\"",
+      "failure_reason": "Remediation Planner did not preserve its hypothesis, impact, and runbook inputs"
+    },
+    "incident_summary": {
+      "expression": "output.title == \"Checkout API timeout incident\" && output.root_cause == input.hypothesis.cause && output.severity == input.remediation.priority && output.resolution == input.remediation.action",
+      "failure_reason": "Incident Summary did not represent the final investigation inputs"
+    }
+  }
+}
