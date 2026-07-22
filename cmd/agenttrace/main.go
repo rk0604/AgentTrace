@@ -3,13 +3,20 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/rk0604/AgentTrace/attrib"
 	"github.com/rk0604/AgentTrace/checkerconfig"
+	"github.com/rk0604/AgentTrace/incidentdemo"
 	"github.com/rk0604/AgentTrace/toypipeline"
 )
+
+type outputOptions struct {
+	JSON       bool
+	OutputPath string
+}
 
 type stepView struct {
 	Step    attrib.Step
@@ -36,65 +43,295 @@ type nodePlacement struct {
 }
 
 func main() {
-	healthy := flag.Bool("healthy", false, "run the toy pipeline without the injected reference failure")
-	inputPath := flag.String("input", "", "read a trace from a JSON file instead of running the toy pipeline")
-	checkersPath := flag.String("checkers", "", "read CEL step checkers from a JSON configuration file")
-	jsonOutput := flag.Bool("json", false, "write only the JSON attribution result to standard output")
-	outputPath := flag.String("output", "", "write the JSON attribution result to a file")
-	flag.Parse()
-
-	if *inputPath != "" && *healthy {
-		exitWithError(fmt.Errorf("healthy cannot be used with input"))
-	}
-	if *jsonOutput && *outputPath != "" {
-		exitWithError(fmt.Errorf("json and output cannot be used together"))
-	}
-
-	// Build a deterministic trace or decode one from JSON.
-	trace, err := loadTrace(*inputPath, !*healthy)
-	if err != nil {
+	if err := runCommandLine(os.Args[1:]); err != nil {
 		exitWithError(err)
+	}
+}
+
+// runCommandLine routes arguments to one AgentTrace command.
+//
+// Input
+// args []string
+// Command line arguments excluding the executable name.
+//
+// Output
+// error
+// Non nil when the command is missing, unknown, or unsuccessful.
+func runCommandLine(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("missing command: use run, validate, or demo")
+	}
+
+	switch args[0] {
+	case "run":
+		return runTraceCommand(args[1:])
+	case "validate":
+		return validateCommand(args[1:])
+	case "demo":
+		return demoCommand(args[1:])
+	default:
+		return fmt.Errorf("unknown command %q: use run, validate, or demo", args[0])
+	}
+}
+
+// runTraceCommand attributes one JSON trace using CEL checker configuration.
+//
+// Input
+// args []string
+// Flags for trace input, checker configuration, and output selection.
+//
+// Output
+// error
+// Non nil when flags, files, checkers, or attribution are invalid.
+func runTraceCommand(args []string) error {
+	flags := newFlagSet("run")
+	inputPath := flags.String("input", "", "read a trace from a JSON file")
+	checkersPath := flags.String("checkers", "", "read CEL step checkers from a JSON configuration file")
+	output := addOutputFlags(flags)
+	if err := parseFlags(flags, args); err != nil {
+		return err
+	}
+	if *inputPath == "" {
+		return fmt.Errorf("run requires --input")
+	}
+	if *checkersPath == "" {
+		return fmt.Errorf("run requires --checkers")
+	}
+
+	trace, err := loadTrace(*inputPath)
+	if err != nil {
+		return err
 	}
 	checkers, err := loadCheckers(*checkersPath)
 	if err != nil {
-		exitWithError(err)
+		return err
 	}
 
-	// Compute dependency order from DependsOn.
+	return executeAttribution(trace, checkers, output)
+}
+
+// validateCommand validates JSON trace and checker files without running attribution.
+//
+// Input
+// args []string
+// Flags containing required trace and checker configuration paths.
+//
+// Output
+// error
+// Non nil when flags, files, the dependency graph, or checker coverage are invalid.
+func validateCommand(args []string) error {
+	flags := newFlagSet("validate")
+	inputPath := flags.String("input", "", "read a trace from a JSON file")
+	checkersPath := flags.String("checkers", "", "read CEL step checkers from a JSON configuration file")
+	if err := parseFlags(flags, args); err != nil {
+		return err
+	}
+	if *inputPath == "" {
+		return fmt.Errorf("validate requires --input")
+	}
+	if *checkersPath == "" {
+		return fmt.Errorf("validate requires --checkers")
+	}
+
+	trace, err := loadTrace(*inputPath)
+	if err != nil {
+		return err
+	}
+	checkers, err := loadCheckers(*checkersPath)
+	if err != nil {
+		return err
+	}
+	if err := attrib.Validate(trace, checkers); err != nil {
+		return err
+	}
+
+	fmt.Println("Validation passed")
+	fmt.Printf("Run ID: %s\n", trace.RunID)
+	fmt.Printf("Steps: %d\n", len(trace.Steps))
+	fmt.Printf("Checkers: %d\n", len(checkers))
+	return nil
+}
+
+// demoCommand routes to one explicit built in demonstration.
+//
+// Input
+// args []string
+// Demo name followed by its flags.
+//
+// Output
+// error
+// Non nil when the demo name is missing, unknown, or unsuccessful.
+func demoCommand(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("demo requires a name: use toy or incident")
+	}
+
+	switch args[0] {
+	case "toy":
+		return demoToyCommand(args[1:])
+	case "incident":
+		return demoIncidentCommand(args[1:])
+	default:
+		return fmt.Errorf("unknown demo %q: use toy or incident", args[0])
+	}
+}
+
+// demoToyCommand runs the deterministic four step toy pipeline.
+//
+// Input
+// args []string
+// Flags selecting healthy mode and output behavior.
+//
+// Output
+// error
+// Non nil when flags or attribution are invalid.
+func demoToyCommand(args []string) error {
+	flags := newFlagSet("demo toy")
+	healthy := flags.Bool("healthy", false, "run without the injected Reference failure")
+	output := addOutputFlags(flags)
+	if err := parseFlags(flags, args); err != nil {
+		return err
+	}
+
+	trace := toypipeline.Run(!*healthy)
+	return executeAttribution(trace, toypipeline.Checkers(), output)
+}
+
+// demoIncidentCommand runs the deterministic incident investigation pipeline.
+//
+// Input
+// args []string
+// Flags selecting the failure mode, checker file, and output behavior.
+//
+// Output
+// error
+// Non nil when flags, failure mode, checker configuration, or attribution are invalid.
+func demoIncidentCommand(args []string) error {
+	flags := newFlagSet("demo incident")
+	failure := flags.String("failure", string(incidentdemo.FailureMetrics), "select none, metrics, or deployment")
+	checkersPath := flags.String("checkers", "examples/incident-checkers.json", "read CEL step checkers from a JSON configuration file")
+	output := addOutputFlags(flags)
+	if err := parseFlags(flags, args); err != nil {
+		return err
+	}
+
+	trace, err := incidentdemo.Run(incidentdemo.FailureMode(*failure))
+	if err != nil {
+		return err
+	}
+	checkers, err := loadCheckers(*checkersPath)
+	if err != nil {
+		return err
+	}
+
+	return executeAttribution(trace, checkers, output)
+}
+
+// newFlagSet creates a command flag parser that returns errors to the caller.
+//
+// Input
+// name string
+// Command name included in parsing errors.
+//
+// Output
+// *flag.FlagSet
+// Flag parser configured for command routing.
+func newFlagSet(name string) *flag.FlagSet {
+	flags := flag.NewFlagSet(name, flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	return flags
+}
+
+// addOutputFlags registers common attribution output flags.
+//
+// Input
+// flags *flag.FlagSet
+// Flag parser that receives the output flags.
+//
+// Output
+// *outputOptions
+// Values populated when the parser reads command arguments.
+func addOutputFlags(flags *flag.FlagSet) *outputOptions {
+	options := &outputOptions{}
+	flags.BoolVar(&options.JSON, "json", false, "write only the JSON attribution result to standard output")
+	flags.StringVar(&options.OutputPath, "output", "", "write the JSON attribution result to a file")
+	return options
+}
+
+// parseFlags parses command flags and validates shared argument rules.
+//
+// Input
+// flags *flag.FlagSet
+// Configured command flag parser.
+//
+// args []string
+// Arguments belonging to the command.
+//
+// Output
+// error
+// Non nil when parsing fails or positional arguments remain.
+func parseFlags(flags *flag.FlagSet, args []string) error {
+	if err := flags.Parse(args); err != nil {
+		return fmt.Errorf("parse %s flags: %w", flags.Name(), err)
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("%s does not accept positional arguments", flags.Name())
+	}
+
+	return nil
+}
+
+// executeAttribution finds a root cause and writes the selected output format.
+//
+// Input
+// trace attrib.Trace
+// Trace to attribute.
+//
+// checkers map[string]attrib.StepChecker
+// Step checker functions keyed by step ID.
+//
+// output *outputOptions
+// Output format and optional destination file.
+//
+// Output
+// error
+// Non nil when options, graph order, attribution, or output writing fail.
+func executeAttribution(trace attrib.Trace, checkers map[string]attrib.StepChecker, output *outputOptions) error {
+	if output.JSON && output.OutputPath != "" {
+		return fmt.Errorf("json and output cannot be used together")
+	}
+
 	orderedSteps, err := attrib.TopologicalSort(trace)
 	if err != nil {
-		exitWithError(err)
+		return err
 	}
-
-	// Run first divergence attribution.
 	result, err := attrib.FindRootCause(trace, checkers)
 	if err != nil {
-		exitWithError(err)
+		return err
 	}
-	if *jsonOutput {
-		if err := attrib.EncodeResult(os.Stdout, result); err != nil {
-			exitWithError(err)
-		}
-		return
+	if output.JSON {
+		return attrib.EncodeResult(os.Stdout, result)
 	}
-	if *outputPath != "" {
-		if err := writeResultFile(*outputPath, result); err != nil {
-			exitWithError(err)
+	if output.OutputPath != "" {
+		if err := writeResultFile(output.OutputPath, result); err != nil {
+			return err
 		}
 	}
 
 	stepViews := buildStepViews(orderedSteps, result, checkers)
 	printReport(trace, stepViews, result)
-	if *outputPath != "" {
-		fmt.Printf("\nJSON result written to %s\n", *outputPath)
+	if output.OutputPath != "" {
+		fmt.Printf("\nJSON result written to %s\n", output.OutputPath)
 	}
+
+	return nil
 }
 
-// loadCheckers creates toy checkers or reads CEL checkers from a JSON file.
+// loadCheckers reads CEL checkers from a JSON file.
 //
 // Input
 // checkersPath string
-// Checker configuration file path. An empty path selects the toy Go checkers.
+// Checker configuration file path.
 //
 // Output
 // map[string]attrib.StepChecker
@@ -103,10 +340,6 @@ func main() {
 // error
 // Non nil when the file cannot be opened, decoded, compiled, or closed.
 func loadCheckers(checkersPath string) (map[string]attrib.StepChecker, error) {
-	if checkersPath == "" {
-		return toypipeline.Checkers(), nil
-	}
-
 	file, err := os.Open(checkersPath)
 	if err != nil {
 		return nil, fmt.Errorf("open checker configuration: %w", err)
@@ -124,26 +357,19 @@ func loadCheckers(checkersPath string) (map[string]attrib.StepChecker, error) {
 	return checkerconfig.Build(config)
 }
 
-// loadTrace creates the toy trace or reads one from a JSON file.
+// loadTrace reads one trace from a JSON file.
 //
 // Input
 // inputPath string
-// JSON file path. An empty path selects the generated toy trace.
-//
-// injectReferenceFailure bool
-// True when the generated toy trace should contain the Reference failure.
+// JSON file path.
 //
 // Output
 // attrib.Trace
-// The generated or decoded trace.
+// The decoded trace.
 //
 // error
 // Non nil when the JSON file cannot be opened, decoded, or closed.
-func loadTrace(inputPath string, injectReferenceFailure bool) (attrib.Trace, error) {
-	if inputPath == "" {
-		return toypipeline.Run(injectReferenceFailure), nil
-	}
-
+func loadTrace(inputPath string) (attrib.Trace, error) {
 	file, err := os.Open(inputPath)
 	if err != nil {
 		return attrib.Trace{}, fmt.Errorf("open trace file: %w", err)

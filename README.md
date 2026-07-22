@@ -18,47 +18,41 @@ branch and separate agent workstreams.
 4. Merge finished work back through pull requests or reviewed local merges.
 5. Rebase or merge `main` into each agent branch regularly to reduce drift.
 
-## Run the toy CLI
+## CLI commands
 
 From the Codex worktree:
 
 ```powershell
 cd C:\Users\Risha\Desktop\AgentTrace-codex
-go run ./cmd/agenttrace
 ```
 
-The default command runs the toy pipeline with the injected Reference failure.
-It prints the dependency ordered steps, each step dependency, each check status,
-and the root cause attribution.
+AgentTrace has three explicit commands:
 
-To run the same toy pipeline without the injected failure:
+- `run` attributes a JSON trace using a JSON CEL checker configuration.
+- `validate` validates both files without evaluating the checkers.
+- `demo` runs a built in toy or incident scenario.
 
-```powershell
-go run ./cmd/agenttrace --healthy
-```
-
-To run all tests:
-
-```powershell
-go test ./...
-```
+Running the CLI without a command returns an error instead of silently selecting
+a demonstration.
 
 ## Run a JSON trace
 
-The example files contain complete traces with real JSON objects inside each
-step's `input` and `output` fields. The CLI decodes those objects into
-`json.RawMessage`, then the toy pipeline checkers interpret their domain data.
-
-Print a human readable report and graph from a JSON trace:
+The normal run mode always requires both `--input` and `--checkers`:
 
 ```powershell
-go run ./cmd/agenttrace --input ./examples/trace-reference-failure.json
+go run ./cmd/agenttrace run `
+  --input ./examples/trace-reference-failure.json `
+  --checkers ./examples/toy-checkers.json
 ```
+
+The example trace contains real JSON objects inside each step's `input` and
+`output` fields. The CLI decodes those objects into `json.RawMessage`, compiles
+the CEL expressions, runs first divergence attribution, and prints the graph.
 
 Print only the machine readable JSON attribution result:
 
 ```powershell
-go run ./cmd/agenttrace `
+go run ./cmd/agenttrace run `
   --input ./examples/trace-reference-failure.json `
   --checkers ./examples/toy-checkers.json `
   --json
@@ -67,7 +61,42 @@ go run ./cmd/agenttrace `
 Write the JSON result to a file while still printing the human readable report:
 
 ```powershell
-go run ./cmd/agenttrace --input ./examples/trace-reference-failure.json --output ./result.json
+go run ./cmd/agenttrace run `
+  --input ./examples/trace-reference-failure.json `
+  --checkers ./examples/toy-checkers.json `
+  --output ./result.json
+```
+
+## Validate configuration
+
+The `validate` command decodes the trace, compiles every CEL expression, checks
+the dependency graph, and confirms that every step has a checker. It does not
+evaluate the checkers or produce an attribution result.
+
+```powershell
+go run ./cmd/agenttrace validate `
+  --input ./examples/trace-reference-failure.json `
+  --checkers ./examples/toy-checkers.json
+```
+
+## Run the toy demo
+
+Run the four step pipeline with the injected Reference failure:
+
+```powershell
+go run ./cmd/agenttrace demo toy
+```
+
+Run the same pipeline without the failure:
+
+```powershell
+go run ./cmd/agenttrace demo toy --healthy
+```
+
+To run all tests:
+
+```powershell
+go test ./...
 ```
 
 ## Configure correctness checks
@@ -83,18 +112,8 @@ Each expression must return `true` when the step behaved correctly given its
 actual input, or `false` when that step is the first source of bad data. The
 configured failure reason is included in the attribution result.
 
-Run the complete generic JSON flow:
-
-```powershell
-go run ./cmd/agenttrace `
-  --input ./examples/trace-reference-failure.json `
-  --checkers ./examples/toy-checkers.json `
-  --output ./result.json
-```
-
-When `--checkers` is omitted, the CLI keeps using `toypipeline.Checkers()` for
-the original built in demonstration. The `attrib` package remains unaware of
-CEL and domain specific payload fields.
+The `attrib` package remains unaware of CEL and domain specific payload fields.
+Only the checker configuration interprets the JSON payloads.
 
 ## Run the incident investigation demo
 
@@ -103,30 +122,28 @@ Log, metrics, deployment, and runbook agents branch in parallel before their
 evidence is merged into a timeline, hypothesis, impact assessment, remediation
 plan, and final incident summary.
 
-Run the healthy investigation:
+Run the healthy investigation demo:
 
 ```powershell
-go run ./cmd/agenttrace `
-  --input ./examples/incident-healthy.json `
-  --checkers ./examples/incident-checkers.json
+go run ./cmd/agenttrace demo incident --failure none
 ```
 
-Inject a Metrics Analyzer failure:
+Inject a Metrics Analyzer failure. This is the default incident mode:
 
 ```powershell
-go run ./cmd/agenttrace `
-  --input ./examples/incident-metrics-failure.json `
-  --checkers ./examples/incident-checkers.json
+go run ./cmd/agenttrace demo incident --failure metrics
 ```
 
 Inject a Deployment Analyzer failure and print only JSON:
 
 ```powershell
-go run ./cmd/agenttrace `
-  --input ./examples/incident-deployment-failure.json `
-  --checkers ./examples/incident-checkers.json `
+go run ./cmd/agenttrace demo incident `
+  --failure deployment `
   --json
 ```
+
+The incident demo loads `./examples/incident-checkers.json` by default. A
+different configuration can be selected with `--checkers`.
 
 The downstream agents deliberately continue from the evidence they actually
 receive. Their outputs can therefore be wrong in the real world while remaining
