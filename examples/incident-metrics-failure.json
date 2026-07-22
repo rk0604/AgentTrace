@@ -1,0 +1,528 @@
+{
+  "run_id": "incident-investigation-metrics",
+  "steps": [
+    {
+      "run_id": "incident-investigation-metrics",
+      "step_id": "incident_intake",
+      "agent_name": "Incident Intake",
+      "depends_on": null,
+      "input": {
+        "incident_id": "INC-2026-071",
+        "service": "checkout-api",
+        "started_at": "2026-07-20T10:00:00Z",
+        "symptom": "checkout requests are timing out",
+        "logs": [
+          {
+            "timestamp": "2026-07-20T10:00:03Z",
+            "service": "checkout-api",
+            "level": "ERROR",
+            "error_code": "REQUEST_TIMEOUT",
+            "message": "payment provider request exceeded configured timeout"
+          },
+          {
+            "timestamp": "2026-07-20T10:00:04Z",
+            "service": "checkout-api",
+            "level": "ERROR",
+            "error_code": "REQUEST_TIMEOUT",
+            "message": "payment provider request exceeded configured timeout"
+          },
+          {
+            "timestamp": "2026-07-20T10:00:05Z",
+            "service": "checkout-api",
+            "level": "INFO",
+            "message": "retry queue depth increased"
+          }
+        ],
+        "metrics": {
+          "observed_at": "2026-07-20T10:01:00Z",
+          "p95_latency_ms": 2400,
+          "threshold_ms": 1000,
+          "error_rate": 0.18
+        },
+        "deployments": [
+          {
+            "deployment_id": "deploy-41",
+            "service": "checkout-api",
+            "commit": "a1b2c3d",
+            "deployed_at": "2026-07-20T08:00:00Z",
+            "timeout_before_seconds": 30,
+            "timeout_after_seconds": 30
+          },
+          {
+            "deployment_id": "deploy-42",
+            "service": "checkout-api",
+            "commit": "d4e5f6a",
+            "deployed_at": "2026-07-20T09:55:00Z",
+            "timeout_before_seconds": 30,
+            "timeout_after_seconds": 3
+          }
+        ],
+        "runbook": {
+          "runbook_id": "RB-TIMEOUT-01",
+          "signal": "REQUEST_TIMEOUT",
+          "cause": "timeout_regression",
+          "recommended_action": "rollback deploy-42 and restore the timeout to 30 seconds"
+        }
+      },
+      "output": {
+        "incident_id": "INC-2026-071",
+        "service": "checkout-api",
+        "started_at": "2026-07-20T10:00:00Z",
+        "symptom": "checkout requests are timing out",
+        "accepted": true
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-20T10:05:00Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "incident-investigation-metrics",
+      "step_id": "investigation_planner",
+      "agent_name": "Investigation Planner",
+      "depends_on": [
+        "incident_intake"
+      ],
+      "input": {
+        "incident_id": "INC-2026-071",
+        "service": "checkout-api",
+        "started_at": "2026-07-20T10:00:00Z",
+        "symptom": "checkout requests are timing out",
+        "accepted": true
+      },
+      "output": {
+        "incident_id": "INC-2026-071",
+        "service": "checkout-api",
+        "tasks": [
+          "analyze_logs",
+          "analyze_metrics",
+          "analyze_deployments",
+          "load_runbook"
+        ]
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-20T10:05:01Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "incident-investigation-metrics",
+      "step_id": "log_analyzer",
+      "agent_name": "Log Analyzer",
+      "depends_on": [
+        "incident_intake",
+        "investigation_planner"
+      ],
+      "input": {
+        "incident_id": "INC-2026-071",
+        "service": "checkout-api",
+        "logs": [
+          {
+            "timestamp": "2026-07-20T10:00:03Z",
+            "service": "checkout-api",
+            "level": "ERROR",
+            "error_code": "REQUEST_TIMEOUT",
+            "message": "payment provider request exceeded configured timeout"
+          },
+          {
+            "timestamp": "2026-07-20T10:00:04Z",
+            "service": "checkout-api",
+            "level": "ERROR",
+            "error_code": "REQUEST_TIMEOUT",
+            "message": "payment provider request exceeded configured timeout"
+          },
+          {
+            "timestamp": "2026-07-20T10:00:05Z",
+            "service": "checkout-api",
+            "level": "INFO",
+            "message": "retry queue depth increased"
+          }
+        ]
+      },
+      "output": {
+        "service": "checkout-api",
+        "error_code": "REQUEST_TIMEOUT",
+        "error_count": 2,
+        "first_error_at": "2026-07-20T10:00:03Z",
+        "summary": "found 2 REQUEST_TIMEOUT errors"
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-20T10:05:02Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "incident-investigation-metrics",
+      "step_id": "metrics_analyzer",
+      "agent_name": "Metrics Analyzer",
+      "depends_on": [
+        "incident_intake",
+        "investigation_planner"
+      ],
+      "input": {
+        "incident_id": "INC-2026-071",
+        "service": "checkout-api",
+        "metrics": {
+          "observed_at": "2026-07-20T10:01:00Z",
+          "p95_latency_ms": 2400,
+          "threshold_ms": 1000,
+          "error_rate": 0.18
+        }
+      },
+      "output": {
+        "observed_at": "2026-07-20T10:01:00Z",
+        "p95_latency_ms": 2400,
+        "threshold_ms": 1000,
+        "error_rate": 0.18,
+        "state": "normal",
+        "summary": "latency is within the configured threshold"
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-20T10:05:02Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "incident-investigation-metrics",
+      "step_id": "deployment_analyzer",
+      "agent_name": "Deployment Analyzer",
+      "depends_on": [
+        "incident_intake",
+        "investigation_planner"
+      ],
+      "input": {
+        "incident_id": "INC-2026-071",
+        "service": "checkout-api",
+        "started_at": "2026-07-20T10:00:00Z",
+        "deployments": [
+          {
+            "deployment_id": "deploy-41",
+            "service": "checkout-api",
+            "commit": "a1b2c3d",
+            "deployed_at": "2026-07-20T08:00:00Z",
+            "timeout_before_seconds": 30,
+            "timeout_after_seconds": 30
+          },
+          {
+            "deployment_id": "deploy-42",
+            "service": "checkout-api",
+            "commit": "d4e5f6a",
+            "deployed_at": "2026-07-20T09:55:00Z",
+            "timeout_before_seconds": 30,
+            "timeout_after_seconds": 3
+          }
+        ]
+      },
+      "output": {
+        "deployment_id": "deploy-42",
+        "commit": "d4e5f6a",
+        "deployed_at": "2026-07-20T09:55:00Z",
+        "changed_field": "request_timeout_seconds",
+        "before_value": 30,
+        "after_value": 3,
+        "correlated": true,
+        "summary": "deployment reduced the request timeout shortly before the incident"
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-20T10:05:02Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "incident-investigation-metrics",
+      "step_id": "runbook_loader",
+      "agent_name": "Runbook Loader",
+      "depends_on": [
+        "incident_intake",
+        "investigation_planner"
+      ],
+      "input": {
+        "incident_id": "INC-2026-071",
+        "runbook": {
+          "runbook_id": "RB-TIMEOUT-01",
+          "signal": "REQUEST_TIMEOUT",
+          "cause": "timeout_regression",
+          "recommended_action": "rollback deploy-42 and restore the timeout to 30 seconds"
+        }
+      },
+      "output": {
+        "runbook_id": "RB-TIMEOUT-01",
+        "signal": "REQUEST_TIMEOUT",
+        "cause": "timeout_regression",
+        "recommended_action": "rollback deploy-42 and restore the timeout to 30 seconds",
+        "loaded": true
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-20T10:05:02Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "incident-investigation-metrics",
+      "step_id": "evidence_merger",
+      "agent_name": "Evidence Merger",
+      "depends_on": [
+        "log_analyzer",
+        "metrics_analyzer",
+        "deployment_analyzer"
+      ],
+      "input": {
+        "logs": {
+          "service": "checkout-api",
+          "error_code": "REQUEST_TIMEOUT",
+          "error_count": 2,
+          "first_error_at": "2026-07-20T10:00:03Z",
+          "summary": "found 2 REQUEST_TIMEOUT errors"
+        },
+        "metrics": {
+          "observed_at": "2026-07-20T10:01:00Z",
+          "p95_latency_ms": 2400,
+          "threshold_ms": 1000,
+          "error_rate": 0.18,
+          "state": "normal",
+          "summary": "latency is within the configured threshold"
+        },
+        "deployment": {
+          "deployment_id": "deploy-42",
+          "commit": "d4e5f6a",
+          "deployed_at": "2026-07-20T09:55:00Z",
+          "changed_field": "request_timeout_seconds",
+          "before_value": 30,
+          "after_value": 3,
+          "correlated": true,
+          "summary": "deployment reduced the request timeout shortly before the incident"
+        }
+      },
+      "output": {
+        "service": "checkout-api",
+        "error_code": "REQUEST_TIMEOUT",
+        "error_count": 2,
+        "first_error_at": "2026-07-20T10:00:03Z",
+        "metric_state": "normal",
+        "p95_latency_ms": 2400,
+        "threshold_ms": 1000,
+        "metric_observed_at": "2026-07-20T10:01:00Z",
+        "deployment_id": "deploy-42",
+        "deployment_at": "2026-07-20T09:55:00Z",
+        "deployment_correlated": true
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-20T10:05:03Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "incident-investigation-metrics",
+      "step_id": "timeline_builder",
+      "agent_name": "Timeline Builder",
+      "depends_on": [
+        "evidence_merger"
+      ],
+      "input": {
+        "service": "checkout-api",
+        "error_code": "REQUEST_TIMEOUT",
+        "error_count": 2,
+        "first_error_at": "2026-07-20T10:00:03Z",
+        "metric_state": "normal",
+        "p95_latency_ms": 2400,
+        "threshold_ms": 1000,
+        "metric_observed_at": "2026-07-20T10:01:00Z",
+        "deployment_id": "deploy-42",
+        "deployment_at": "2026-07-20T09:55:00Z",
+        "deployment_correlated": true
+      },
+      "output": {
+        "deployment_id": "deploy-42",
+        "deployment_at": "2026-07-20T09:55:00Z",
+        "first_error_at": "2026-07-20T10:00:03Z",
+        "metric_observed_at": "2026-07-20T10:01:00Z",
+        "ordered": true
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-20T10:05:04Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "incident-investigation-metrics",
+      "step_id": "hypothesis_generator",
+      "agent_name": "Hypothesis Generator",
+      "depends_on": [
+        "evidence_merger",
+        "timeline_builder"
+      ],
+      "input": {
+        "evidence": {
+          "service": "checkout-api",
+          "error_code": "REQUEST_TIMEOUT",
+          "error_count": 2,
+          "first_error_at": "2026-07-20T10:00:03Z",
+          "metric_state": "normal",
+          "p95_latency_ms": 2400,
+          "threshold_ms": 1000,
+          "metric_observed_at": "2026-07-20T10:01:00Z",
+          "deployment_id": "deploy-42",
+          "deployment_at": "2026-07-20T09:55:00Z",
+          "deployment_correlated": true
+        },
+        "timeline": {
+          "deployment_id": "deploy-42",
+          "deployment_at": "2026-07-20T09:55:00Z",
+          "first_error_at": "2026-07-20T10:00:03Z",
+          "metric_observed_at": "2026-07-20T10:01:00Z",
+          "ordered": true
+        }
+      },
+      "output": {
+        "cause": "application_error",
+        "confidence": "medium",
+        "evidence": [
+          "request_timeout_errors",
+          "metrics_reported_normal"
+        ]
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-20T10:05:05Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "incident-investigation-metrics",
+      "step_id": "impact_assessor",
+      "agent_name": "Impact Assessor",
+      "depends_on": [
+        "evidence_merger",
+        "hypothesis_generator"
+      ],
+      "input": {
+        "evidence": {
+          "service": "checkout-api",
+          "error_code": "REQUEST_TIMEOUT",
+          "error_count": 2,
+          "first_error_at": "2026-07-20T10:00:03Z",
+          "metric_state": "normal",
+          "p95_latency_ms": 2400,
+          "threshold_ms": 1000,
+          "metric_observed_at": "2026-07-20T10:01:00Z",
+          "deployment_id": "deploy-42",
+          "deployment_at": "2026-07-20T09:55:00Z",
+          "deployment_correlated": true
+        },
+        "hypothesis": {
+          "cause": "application_error",
+          "confidence": "medium",
+          "evidence": [
+            "request_timeout_errors",
+            "metrics_reported_normal"
+          ]
+        }
+      },
+      "output": {
+        "severity": "SEV2",
+        "affected_service": "checkout-api",
+        "customer_impact": "degraded checkout performance"
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-20T10:05:06Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "incident-investigation-metrics",
+      "step_id": "runbook_matcher",
+      "agent_name": "Runbook Matcher",
+      "depends_on": [
+        "runbook_loader",
+        "hypothesis_generator"
+      ],
+      "input": {
+        "hypothesis": {
+          "cause": "application_error",
+          "confidence": "medium",
+          "evidence": [
+            "request_timeout_errors",
+            "metrics_reported_normal"
+          ]
+        },
+        "runbook": {
+          "runbook_id": "RB-TIMEOUT-01",
+          "signal": "REQUEST_TIMEOUT",
+          "cause": "timeout_regression",
+          "recommended_action": "rollback deploy-42 and restore the timeout to 30 seconds",
+          "loaded": true
+        }
+      },
+      "output": {
+        "runbook_id": "RB-TIMEOUT-01",
+        "applicable": false,
+        "action": "collect additional evidence"
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-20T10:05:06Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "incident-investigation-metrics",
+      "step_id": "remediation_planner",
+      "agent_name": "Remediation Planner",
+      "depends_on": [
+        "hypothesis_generator",
+        "impact_assessor",
+        "runbook_matcher"
+      ],
+      "input": {
+        "hypothesis": {
+          "cause": "application_error",
+          "confidence": "medium",
+          "evidence": [
+            "request_timeout_errors",
+            "metrics_reported_normal"
+          ]
+        },
+        "impact": {
+          "severity": "SEV2",
+          "affected_service": "checkout-api",
+          "customer_impact": "degraded checkout performance"
+        },
+        "runbook": {
+          "runbook_id": "RB-TIMEOUT-01",
+          "applicable": false,
+          "action": "collect additional evidence"
+        }
+      },
+      "output": {
+        "cause": "application_error",
+        "priority": "SEV2",
+        "action": "collect additional evidence",
+        "owner": "checkout-on-call"
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-20T10:05:07Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "incident-investigation-metrics",
+      "step_id": "incident_summary",
+      "agent_name": "Incident Summary",
+      "depends_on": [
+        "hypothesis_generator",
+        "remediation_planner"
+      ],
+      "input": {
+        "hypothesis": {
+          "cause": "application_error",
+          "confidence": "medium",
+          "evidence": [
+            "request_timeout_errors",
+            "metrics_reported_normal"
+          ]
+        },
+        "remediation": {
+          "cause": "application_error",
+          "priority": "SEV2",
+          "action": "collect additional evidence",
+          "owner": "checkout-on-call"
+        }
+      },
+      "output": {
+        "title": "Checkout API timeout incident",
+        "root_cause": "application_error",
+        "severity": "SEV2",
+        "resolution": "collect additional evidence"
+      },
+      "model_used": "deterministic-stub",
+      "timestamp": "2026-07-20T10:05:08Z",
+      "status": "ok"
+    }
+  ]
+}

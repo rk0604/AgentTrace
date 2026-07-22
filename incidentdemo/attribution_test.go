@@ -92,6 +92,42 @@ func TestIncidentDownstreamStepsRemainCorrectGivenFailedInputs(t *testing.T) {
 	}
 }
 
+func TestIncidentJSONFixturesProduceExpectedAttribution(t *testing.T) {
+	checkers := loadIncidentCheckers(t)
+	tests := []struct {
+		name          string
+		fixture       string
+		wantStatus    string
+		wantRootCause string
+	}{
+		{name: "healthy", fixture: "incident-healthy.json", wantStatus: "passed"},
+		{name: "metrics failure", fixture: "incident-metrics-failure.json", wantStatus: "failed", wantRootCause: incidentdemo.MetricsAnalyzerStepID},
+		{name: "deployment failure", fixture: "incident-deployment-failure.json", wantStatus: "failed", wantRootCause: incidentdemo.DeploymentAnalyzerStepID},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			trace := loadIncidentTrace(t, test.fixture)
+			result, err := attrib.FindRootCause(trace, checkers)
+			if err != nil {
+				t.Fatalf("FindRootCause returned error: %v", err)
+			}
+			if result.Status != test.wantStatus {
+				t.Fatalf("expected status %q, got %q", test.wantStatus, result.Status)
+			}
+			if test.wantRootCause == "" {
+				if result.RootCause != nil {
+					t.Fatalf("expected no root cause, got %+v", result.RootCause)
+				}
+				return
+			}
+			if result.RootCause == nil || result.RootCause.StepID != test.wantRootCause {
+				t.Fatalf("expected root cause %q, got %+v", test.wantRootCause, result.RootCause)
+			}
+		})
+	}
+}
+
 func loadIncidentCheckers(t *testing.T) map[string]attrib.StepChecker {
 	t.Helper()
 
@@ -112,4 +148,21 @@ func loadIncidentCheckers(t *testing.T) map[string]attrib.StepChecker {
 	}
 
 	return checkers
+}
+
+func loadIncidentTrace(t *testing.T, name string) attrib.Trace {
+	t.Helper()
+
+	file, err := os.Open(filepath.Join("..", "examples", name))
+	if err != nil {
+		t.Fatalf("open incident trace %q: %v", name, err)
+	}
+	defer file.Close()
+
+	trace, err := attrib.DecodeTrace(file)
+	if err != nil {
+		t.Fatalf("decode incident trace %q: %v", name, err)
+	}
+
+	return trace
 }
