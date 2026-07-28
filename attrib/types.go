@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// CurrentTraceVersion identifies the current external trace schema.
+const CurrentTraceVersion = 1
+
 type Step struct {
 	RunID      string          `json:"run_id"`
 	StepID     string          `json:"step_id"`
@@ -19,6 +22,7 @@ type Step struct {
 }
 
 type Trace struct {
-	RunID string `json:"run_id"`
-	Steps []Step `json:"steps"`
+	Version int    `json:"version,omitempty"`
+	RunID   string `json:"run_id"`
+	Steps   []Step `json:"steps"`
 }
