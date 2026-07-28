@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -87,6 +88,7 @@ func runTraceCommand(args []string) error {
 	flags := newFlagSet("run")
 	inputPath := flags.String("input", "", "read a trace from a JSON file")
 	checkersPath := flags.String("checkers", "", "read CEL step checkers from a JSON configuration file")
+	contextPath := flags.String("context", "", "read optional evaluation context from a JSON file")
 	output := addOutputFlags(flags)
 	if err := parseFlags(flags, args); err != nil {
 		return err
@@ -102,7 +104,7 @@ func runTraceCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	checkers, err := loadCheckers(*checkersPath)
+	checkers, err := loadCheckers(*checkersPath, trace, *contextPath)
 	if err != nil {
 		return err
 	}
@@ -123,6 +125,7 @@ func validateCommand(args []string) error {
 	flags := newFlagSet("validate")
 	inputPath := flags.String("input", "", "read a trace from a JSON file")
 	checkersPath := flags.String("checkers", "", "read CEL step checkers from a JSON configuration file")
+	contextPath := flags.String("context", "", "read optional evaluation context from a JSON file")
 	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
@@ -137,7 +140,7 @@ func validateCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	checkers, err := loadCheckers(*checkersPath)
+	checkers, err := loadCheckers(*checkersPath, trace, *contextPath)
 	if err != nil {
 		return err
 	}
@@ -210,6 +213,7 @@ func demoIncidentCommand(args []string) error {
 	flags := newFlagSet("demo incident")
 	failure := flags.String("failure", string(incidentdemo.FailureMetrics), "select none, metrics, or deployment")
 	checkersPath := flags.String("checkers", "examples/incident-checkers.json", "read CEL step checkers from a JSON configuration file")
+	contextPath := flags.String("context", "", "read optional evaluation context from a JSON file")
 	output := addOutputFlags(flags)
 	if err := parseFlags(flags, args); err != nil {
 		return err
@@ -219,7 +223,7 @@ func demoIncidentCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	checkers, err := loadCheckers(*checkersPath)
+	checkers, err := loadCheckers(*checkersPath, trace, *contextPath)
 	if err != nil {
 		return err
 	}
@@ -327,19 +331,25 @@ func executeAttribution(trace attrib.Trace, checkers map[string]attrib.StepCheck
 	return nil
 }
 
-// loadCheckers reads CEL checkers from a JSON file.
+// loadCheckers reads CEL checkers and optional context from JSON files.
 //
 // Input
 // checkersPath string
 // Checker configuration file path.
+//
+// trace attrib.Trace
+// Trace metadata exposed to CEL through the run variable.
+//
+// contextPath string
+// Optional JSON file exposed through context and expected variables.
 //
 // Output
 // map[string]attrib.StepChecker
 // Step checker functions keyed by step ID.
 //
 // error
-// Non nil when the file cannot be opened, decoded, compiled, or closed.
-func loadCheckers(checkersPath string) (map[string]attrib.StepChecker, error) {
+// Non nil when a file cannot be opened, decoded, compiled, or closed.
+func loadCheckers(checkersPath string, trace attrib.Trace, contextPath string) (map[string]attrib.StepChecker, error) {
 	file, err := os.Open(checkersPath)
 	if err != nil {
 		return nil, fmt.Errorf("open checker configuration: %w", err)
@@ -354,7 +364,40 @@ func loadCheckers(checkersPath string) (map[string]attrib.StepChecker, error) {
 		return nil, fmt.Errorf("close checker configuration: %w", closeErr)
 	}
 
-	return checkerconfig.Build(config)
+	contextData, err := loadContext(contextPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return checkerconfig.BuildWithOptions(config, checkerconfig.BuildOptions{
+		Trace:   &trace,
+		Context: contextData,
+	})
+}
+
+// loadContext reads optional generic evaluation context.
+//
+// Input
+// contextPath string
+// Optional path to one JSON object.
+//
+// Output
+// json.RawMessage
+// Context bytes or nil when no path is supplied.
+//
+// error
+// Non nil when the context file cannot be read.
+func loadContext(contextPath string) (json.RawMessage, error) {
+	if contextPath == "" {
+		return nil, nil
+	}
+
+	data, err := os.ReadFile(contextPath)
+	if err != nil {
+		return nil, fmt.Errorf("read evaluation context: %w", err)
+	}
+
+	return json.RawMessage(data), nil
 }
 
 // loadTrace reads one trace from a JSON file.
