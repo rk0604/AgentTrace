@@ -224,9 +224,10 @@ func TestEncodeResultWritesJSON(t *testing.T) {
 		RunID:  "run-json",
 		Status: "failed",
 		RootCause: &attrib.RootCause{
-			StepID:    "source",
-			AgentName: "Source",
-			Reason:    "incorrect output",
+			StepID:     "source",
+			AgentName:  "Source",
+			Reason:     "incorrect output",
+			Expression: "output.ready && expected.ready",
 		},
 		CheckedStepIDs: []string{"source"},
 	}
@@ -242,5 +243,8 @@ func TestEncodeResultWritesJSON(t *testing.T) {
 	}
 	if decoded.RootCause == nil || decoded.RootCause.StepID != "source" {
 		t.Fatalf("unexpected encoded root cause %+v", decoded.RootCause)
+	}
+	if bytes.Contains(output.Bytes(), []byte(`\u0026`)) {
+		t.Fatalf("expected readable expression JSON, got %s", output.Bytes())
 	}
 }

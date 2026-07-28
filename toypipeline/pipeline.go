@@ -59,7 +59,8 @@ func Run(injectReferenceFailure bool) attrib.Trace {
 	synthesizerOutput := synthesize(comparatorOutput)
 
 	return attrib.Trace{
-		RunID: RunID,
+		Version: attrib.CurrentTraceVersion,
+		RunID:   RunID,
 		Steps: []attrib.Step{
 			{
 				RunID:     RunID,

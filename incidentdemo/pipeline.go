@@ -69,7 +69,11 @@ func Run(failureMode FailureMode) (attrib.Trace, error) {
 		newStep(runID, IncidentSummaryStepID, "Incident Summary", []string{HypothesisGeneratorStepID, RemediationPlannerStepID}, summaryInput, summary, baseTime.Add(8*time.Second)),
 	}
 
-	return attrib.Trace{RunID: runID, Steps: steps}, nil
+	return attrib.Trace{
+		Version: attrib.CurrentTraceVersion,
+		RunID:   runID,
+		Steps:   steps,
+	}, nil
 }
 
 // validateFailureMode checks whether a failure mode is supported.

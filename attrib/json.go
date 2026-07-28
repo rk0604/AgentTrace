@@ -137,6 +137,7 @@ func EncodeTrace(writer io.Writer, trace Trace) error {
 
 	encoder := json.NewEncoder(writer)
 	encoder.SetIndent("", "  ")
+	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(trace); err != nil {
 		return fmt.Errorf("encode trace JSON: %w", err)
 	}
@@ -159,6 +160,7 @@ func EncodeTrace(writer io.Writer, trace Trace) error {
 func EncodeResult(writer io.Writer, result AttributionResult) error {
 	encoder := json.NewEncoder(writer)
 	encoder.SetIndent("", "  ")
+	encoder.SetEscapeHTML(false)
 
 	if err := encoder.Encode(result); err != nil {
 		return fmt.Errorf("encode attribution result JSON: %w", err)
