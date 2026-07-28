@@ -8,6 +8,14 @@ import (
 // CurrentTraceVersion identifies the current external trace schema.
 const CurrentTraceVersion = 1
 
+const (
+	// MaxTraceSteps bounds external trace graph size.
+	MaxTraceSteps = 10000
+
+	// MaxStepDependencies bounds incoming edges for one external step.
+	MaxStepDependencies = 1000
+)
+
 type Step struct {
 	RunID      string          `json:"run_id"`
 	StepID     string          `json:"step_id"`

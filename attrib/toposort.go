@@ -1,6 +1,86 @@
 package attrib
 
-import "fmt"
+import (
+	"container/heap"
+	"fmt"
+)
+
+type readyStepHeap struct {
+	stepIDs      []string
+	positionByID map[string]int
+}
+
+// Len returns the number of ready step IDs.
+//
+// Input
+// ready readyStepHeap
+// Heap receiving the method call.
+//
+// Output
+// int
+// Number of queued step IDs.
+func (ready readyStepHeap) Len() int {
+	return len(ready.stepIDs)
+}
+
+// Less reports which ready step appeared first in the trace.
+//
+// Input
+// left int
+// Index of the first heap value.
+//
+// right int
+// Index of the second heap value.
+//
+// Output
+// bool
+// True when the left step has the earlier original position.
+func (ready readyStepHeap) Less(left int, right int) bool {
+	return ready.positionByID[ready.stepIDs[left]] < ready.positionByID[ready.stepIDs[right]]
+}
+
+// Swap exchanges two ready step IDs.
+//
+// Input
+// left int
+// Index of the first heap value.
+//
+// right int
+// Index of the second heap value.
+//
+// Output
+// None
+func (ready readyStepHeap) Swap(left int, right int) {
+	ready.stepIDs[left], ready.stepIDs[right] = ready.stepIDs[right], ready.stepIDs[left]
+}
+
+// Push appends one step ID to the heap storage.
+//
+// Input
+// value any
+// String step ID supplied by container heap.
+//
+// Output
+// None
+func (ready *readyStepHeap) Push(value any) {
+	ready.stepIDs = append(ready.stepIDs, value.(string))
+}
+
+// Pop removes the final step ID from the heap storage.
+//
+// Input
+// ready pointer to readyStepHeap
+// Heap receiving the method call.
+//
+// Output
+// any
+// Removed string step ID.
+func (ready *readyStepHeap) Pop() any {
+	lastIndex := len(ready.stepIDs) - 1
+	value := ready.stepIDs[lastIndex]
+	ready.stepIDs = ready.stepIDs[:lastIndex]
+	return value
+}
 
 // TopologicalSort returns the trace steps in dependency order.
 //
@@ -49,10 +129,15 @@ func TopologicalSort(trace Trace) ([]Step, error) {
 
 	// Second pass records graph edges and dependency counts.
 	for _, step := range trace.Steps {
+		seenDependencies := make(map[string]bool, len(step.DependsOn))
 		for _, dependencyID := range step.DependsOn {
 			if _, exists := stepsByID[dependencyID]; !exists {
 				return nil, fmt.Errorf("step %q depends on unknown step %q", step.StepID, dependencyID)
 			}
+			if seenDependencies[dependencyID] {
+				return nil, fmt.Errorf("step %q repeats dependency %q", step.StepID, dependencyID)
+			}
+			seenDependencies[dependencyID] = true
 
 			// dependencyID must run before step.StepID.
 			dependentsByID[dependencyID] = append(dependentsByID[dependencyID], step.StepID)
@@ -63,10 +148,13 @@ func TopologicalSort(trace Trace) ([]Step, error) {
 	}
 
 	// ready contains steps that have no unresolved dependencies.
-	ready := make([]string, 0, len(trace.Steps))
+	ready := &readyStepHeap{
+		stepIDs:      make([]string, 0, len(trace.Steps)),
+		positionByID: positionByID,
+	}
 	for _, step := range trace.Steps {
 		if indegreeByID[step.StepID] == 0 {
-			ready = append(ready, step.StepID)
+			heap.Push(ready, step.StepID)
 		}
 	}
 
@@ -74,12 +162,9 @@ func TopologicalSort(trace Trace) ([]Step, error) {
 	ordered := make([]Step, 0, len(trace.Steps))
 
 	// Process ready steps until no ready steps remain.
-	for len(ready) > 0 {
+	for ready.Len() > 0 {
 		// Pick the ready step that appeared earliest in the original trace.
-		nextID := popEarliestReady(ready, positionByID)
-
-		// Remove the selected step from the ready queue.
-		ready = removeReady(ready, nextID)
+		nextID := heap.Pop(ready).(string)
 
 		// Add the selected step to the sorted output.
 		ordered = append(ordered, stepsByID[nextID])
@@ -90,7 +175,7 @@ func TopologicalSort(trace Trace) ([]Step, error) {
 
 			// Once a dependent has no unresolved dependencies, it is ready.
 			if indegreeByID[dependentID] == 0 {
-				ready = append(ready, dependentID)
+				heap.Push(ready, dependentID)
 			}
 		}
 	}
@@ -101,50 +186,4 @@ func TopologicalSort(trace Trace) ([]Step, error) {
 	}
 
 	return ordered, nil
-}
-
-// popEarliestReady selects the ready step that appeared earliest in the original trace.
-//
-// Input:
-// ready []string
-// Step IDs that currently have no unresolved dependencies.
-//
-// positionByID map[string]int
-// Map from step ID to original trace position.
-//
-// Output:
-// string
-// The ready step ID with the smallest original position.
-func popEarliestReady(ready []string, positionByID map[string]int) string {
-	nextID := ready[0]
-
-	for _, candidateID := range ready[1:] {
-		if positionByID[candidateID] < positionByID[nextID] {
-			nextID = candidateID
-		}
-	}
-
-	return nextID
-}
-
-// removeReady removes one step ID from the ready list.
-//
-// Input:
-// ready []string
-// Current list of ready step IDs.
-//
-// stepID string
-// Step ID to remove.
-//
-// Output:
-// []string
-// Ready list without the selected step ID.
-func removeReady(ready []string, stepID string) []string {
-	for index, readyID := range ready {
-		if readyID == stepID {
-			return append(ready[:index], ready[index+1:]...)
-		}
-	}
-
-	return ready
 }

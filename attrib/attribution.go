@@ -5,8 +5,10 @@ import (
 	"fmt"
 )
 
+// StepChecker evaluates one step against its actual inputs.
 type StepChecker func(Step) (CheckResult, error)
 
+// CheckResult contains one evaluator decision and optional evidence.
 type CheckResult struct {
 	Passed     bool
 	Reason     string
@@ -14,6 +16,7 @@ type CheckResult struct {
 	Expected   json.RawMessage
 }
 
+// RootCause identifies the first failed step and its evidence.
 type RootCause struct {
 	StepID     string          `json:"step_id"`
 	AgentName  string          `json:"agent_name"`
@@ -30,6 +33,7 @@ type CauseEdge struct {
 	ToStepID   string `json:"to_step_id"`
 }
 
+// AttributionResult contains the final first divergence analysis.
 type AttributionResult struct {
 	RunID           string      `json:"run_id"`
 	Status          string      `json:"status"`
@@ -39,6 +43,21 @@ type AttributionResult struct {
 	CauseEdges      []CauseEdge `json:"cause_edges,omitempty"`
 }
 
+// FindRootCause evaluates steps in dependency order.
+//
+// Input
+// trace Trace
+// Completed pipeline trace.
+//
+// checkers map of string to StepChecker
+// Correctness checkers keyed by step ID.
+//
+// Output
+// AttributionResult
+// Passed result or first divergence with downstream impact.
+//
+// error
+// Non nil when graph, checker coverage, or evaluation fails.
 func FindRootCause(trace Trace, checkers map[string]StepChecker) (AttributionResult, error) {
 	orderedSteps, err := TopologicalSort(trace)
 	if err != nil {
@@ -129,10 +148,27 @@ func validateCheckerCoverage(orderedSteps []Step, checkers map[string]StepChecke
 	return nil
 }
 
+// Pass creates a successful check result.
+//
+// Input
+// None
+//
+// Output
+// CheckResult
+// Successful evaluator result.
 func Pass() CheckResult {
 	return CheckResult{Passed: true}
 }
 
+// Fail creates a failed check result without structured evidence.
+//
+// Input
+// reason string
+// Human readable failure explanation.
+//
+// Output
+// CheckResult
+// Failed evaluator result.
 func Fail(reason string) CheckResult {
 	return CheckResult{Passed: false, Reason: reason}
 }
@@ -207,6 +243,15 @@ func downstreamImpact(orderedSteps []Step, rootCauseStepID string) ([]string, []
 	return affectedStepIDs, causeEdges
 }
 
+// cloneRawMessage creates an isolated copy of raw JSON.
+//
+// Input
+// message json.RawMessage
+// Raw JSON value to copy.
+//
+// Output
+// json.RawMessage
+// Detached bytes or nil.
 func cloneRawMessage(message json.RawMessage) json.RawMessage {
 	if len(message) == 0 {
 		return nil

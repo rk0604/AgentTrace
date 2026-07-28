@@ -455,6 +455,18 @@ func confidenceValue(confidence *float64) any {
 	return *confidence
 }
 
+// evaluationTimeout resolves the configured CEL duration.
+//
+// Input
+// configured time.Duration
+// Optional evaluator timeout.
+//
+// Output
+// time.Duration
+// Configured duration or the default duration.
+//
+// error
+// Non nil when the duration is negative.
 func evaluationTimeout(configured time.Duration) (time.Duration, error) {
 	if configured < 0 {
 		return 0, fmt.Errorf("evaluation timeout cannot be negative")
@@ -466,6 +478,18 @@ func evaluationTimeout(configured time.Duration) (time.Duration, error) {
 	return configured, nil
 }
 
+// hasField reports whether a dynamic map contains one key.
+//
+// Input
+// value ref.Val
+// Candidate CEL map.
+//
+// field ref.Val
+// Candidate map key.
+//
+// Output
+// ref.Val
+// CEL Boolean indicating whether the key exists.
 func hasField(value ref.Val, field ref.Val) ref.Val {
 	mapper, ok := value.(traits.Mapper)
 	if !ok {
@@ -476,15 +500,42 @@ func hasField(value ref.Val, field ref.Val) ref.Val {
 	return types.Bool(found)
 }
 
+// isString reports whether a CEL value is a string.
+//
+// Input
+// value ref.Val
+// Dynamic CEL value.
+//
+// Output
+// ref.Val
+// CEL Boolean type result.
 func isString(value ref.Val) ref.Val {
 	return types.Bool(value.Type() == types.StringType)
 }
 
+// isNumber reports whether a CEL value is numeric.
+//
+// Input
+// value ref.Val
+// Dynamic CEL value.
+//
+// Output
+// ref.Val
+// CEL Boolean type result.
 func isNumber(value ref.Val) ref.Val {
 	_, ok := numberValue(value)
 	return types.Bool(ok)
 }
 
+// isNonEmpty reports whether a CEL collection or string has content.
+//
+// Input
+// value ref.Val
+// Dynamic CEL value that may support size.
+//
+// Output
+// ref.Val
+// CEL Boolean indicating whether size is greater than zero.
 func isNonEmpty(value ref.Val) ref.Val {
 	sizer, ok := value.(traits.Sizer)
 	if !ok {
@@ -495,6 +546,15 @@ func isNonEmpty(value ref.Val) ref.Val {
 	return types.Bool(ok && size > 0)
 }
 
+// withinRange checks an inclusive numeric range.
+//
+// Input
+// values variadic ref.Val
+// Value, minimum, and maximum numeric arguments.
+//
+// Output
+// ref.Val
+// CEL Boolean range result or a CEL error for invalid arity.
 func withinRange(values ...ref.Val) ref.Val {
 	if len(values) != 3 {
 		return types.NewErr("withinRange requires three arguments")
@@ -510,10 +570,31 @@ func withinRange(values ...ref.Val) ref.Val {
 	return types.Bool(value >= minimum && value <= maximum)
 }
 
+// equalsExpected compares actual and expected CEL values.
+//
+// Input
+// actual ref.Val
+// Actual dynamic value.
+//
+// expected ref.Val
+// Expected dynamic value.
+//
+// Output
+// ref.Val
+// CEL equality result.
 func equalsExpected(actual ref.Val, expected ref.Val) ref.Val {
 	return actual.Equal(expected)
 }
 
+// sameField compares one field across two dynamic maps.
+//
+// Input
+// values variadic ref.Val
+// Left map, right map, and string field name.
+//
+// Output
+// ref.Val
+// CEL Boolean comparison result or a CEL error for invalid arity.
 func sameField(values ...ref.Val) ref.Val {
 	if len(values) != 3 {
 		return types.NewErr("sameField requires three arguments")
@@ -534,6 +615,18 @@ func sameField(values ...ref.Val) ref.Val {
 	return leftValue.Equal(rightValue)
 }
 
+// numberValue converts a CEL numeric value to float64.
+//
+// Input
+// value ref.Val
+// Dynamic CEL value.
+//
+// Output
+// float64
+// Converted number or zero.
+//
+// bool
+// True when the input is numeric.
 func numberValue(value ref.Val) (float64, bool) {
 	switch number := value.(type) {
 	case types.Double:

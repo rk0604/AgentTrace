@@ -153,6 +153,15 @@ func Run(failureMode FailureMode) (attrib.Trace, error) {
 	return run.Trace()
 }
 
+// validateFailureMode checks the requested document failure.
+//
+// Input
+// failureMode FailureMode
+// Requested injected behavior.
+//
+// Output
+// error
+// Non nil when the mode is unsupported.
 func validateFailureMode(failureMode FailureMode) error {
 	switch failureMode {
 	case FailureNone, FailureExtraction, FailureReference:
@@ -162,6 +171,15 @@ func validateFailureMode(failureMode FailureMode) error {
 	}
 }
 
+// sequenceClock creates deterministic one second timestamps.
+//
+// Input
+// start time.Time
+// First timestamp returned by the clock.
+//
+// Output
+// function returning time.Time
+// Clock that advances one second after each call.
 func sequenceClock(start time.Time) func() time.Time {
 	next := start
 

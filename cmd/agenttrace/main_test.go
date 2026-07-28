@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +18,12 @@ func TestRunCommandLineRequiresExplicitCommand(t *testing.T) {
 func TestRunCommandLineRejectsUnknownCommand(t *testing.T) {
 	err := runCommandLine([]string{"unknown"})
 	assertErrorContains(t, err, `unknown command "unknown"`)
+}
+
+func TestRunCommandLineAcceptsHelp(t *testing.T) {
+	if err := runCommandLine([]string{"help"}); err != nil {
+		t.Fatalf("runCommandLine returned error: %v", err)
+	}
 }
 
 func TestRunCommandRequiresTraceAndCheckers(t *testing.T) {
@@ -125,6 +134,57 @@ func TestDocumentDemoWritesRecordedTrace(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"version": 1`) {
 		t.Fatalf("expected versioned trace, got %s", data)
+	}
+}
+
+func TestReadLimitedFileRejectsOversizedInput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "large.json")
+	writeTestFile(t, path, strings.Repeat("x", 11))
+
+	_, err := readLimitedFile(path, 10, "test input")
+	assertErrorContains(t, err, "exceeds byte limit 10")
+}
+
+func TestFitEvidenceTextBoundsHumanOutput(t *testing.T) {
+	text := strings.Repeat("x", maxEvidenceTextSize+10)
+
+	got := fitEvidenceText(text)
+
+	if len(got) >= len(text) {
+		t.Fatalf("expected bounded evidence, got length %d", len(got))
+	}
+	if !strings.HasSuffix(got, "... truncated") {
+		t.Fatalf("expected truncation marker, got %q", got)
+	}
+}
+
+func TestCommandExitCodeDistinguishesUsageAndRuntimeErrors(t *testing.T) {
+	if got := commandExitCode(runCommandLine(nil)); got != exitCodeUsage {
+		t.Fatalf("expected usage exit code %d, got %d", exitCodeUsage, got)
+	}
+	if got := commandExitCode(errors.New("runtime failure")); got != exitCodeRuntime {
+		t.Fatalf("expected runtime exit code %d, got %d", exitCodeRuntime, got)
+	}
+}
+
+func TestWriteCommandErrorSupportsJSON(t *testing.T) {
+	var output bytes.Buffer
+	err := newUsageError("missing required input")
+
+	writeCommandError(&output, err, "json")
+
+	var record map[string]any
+	if decodeErr := json.Unmarshal(output.Bytes(), &record); decodeErr != nil {
+		t.Fatalf("decode JSON error record: %v", decodeErr)
+	}
+	if record["level"] != "error" {
+		t.Fatalf("expected error level, got %v", record["level"])
+	}
+	if record["message"] != "missing required input" {
+		t.Fatalf("unexpected message %v", record["message"])
+	}
+	if record["exit_code"] != float64(exitCodeUsage) {
+		t.Fatalf("expected exit code %d, got %v", exitCodeUsage, record["exit_code"])
 	}
 }
 

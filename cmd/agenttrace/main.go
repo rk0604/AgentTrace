@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -15,6 +16,61 @@ import (
 	"github.com/rk0604/AgentTrace/incidentdemo"
 	"github.com/rk0604/AgentTrace/toypipeline"
 )
+
+const (
+	maxTraceFileBytes   int64 = 16 * 1024 * 1024
+	maxCheckerFileBytes int64 = 2 * 1024 * 1024
+	maxContextFileBytes int64 = 2 * 1024 * 1024
+	maxEvidenceTextSize       = 1200
+)
+
+const (
+	exitCodeRuntime = 1
+	exitCodeUsage   = 2
+)
+
+type usageError struct {
+	err error
+}
+
+// Error returns the underlying usage message.
+//
+// Input
+// usage usageError
+// Error receiving the method call.
+//
+// Output
+// string
+// Human readable usage error.
+func (usage usageError) Error() string {
+	return usage.err.Error()
+}
+
+// Unwrap exposes the underlying error.
+//
+// Input
+// usage usageError
+// Error receiving the method call.
+//
+// Output
+// error
+// Wrapped error value.
+func (usage usageError) Unwrap() error {
+	return usage.err
+}
+
+// ExitCode returns the stable usage process code.
+//
+// Input
+// usage usageError
+// Error receiving the method call.
+//
+// Output
+// int
+// Process exit code for invalid command usage.
+func (usage usageError) ExitCode() int {
+	return exitCodeUsage
+}
 
 type outputOptions struct {
 	JSON       bool
@@ -63,7 +119,7 @@ func main() {
 // Non nil when the command is missing, unknown, or unsuccessful.
 func runCommandLine(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("missing command: use run, validate, or demo")
+		return newUsageError("missing command: use run, validate, or demo")
 	}
 
 	switch args[0] {
@@ -73,9 +129,34 @@ func runCommandLine(args []string) error {
 		return validateCommand(args[1:])
 	case "demo":
 		return demoCommand(args[1:])
+	case "help", "--help", "-h":
+		printUsage(os.Stdout)
+		return nil
 	default:
-		return fmt.Errorf("unknown command %q: use run, validate, or demo", args[0])
+		return newUsageError("unknown command %q: use run, validate, or demo", args[0])
 	}
+}
+
+// printUsage writes the supported command forms.
+//
+// Input
+// writer io.Writer
+// Destination for usage text.
+//
+// Output
+// None
+func printUsage(writer io.Writer) {
+	fmt.Fprintln(writer, "AgentTrace")
+	fmt.Fprintln(writer, "")
+	fmt.Fprintln(writer, "Commands")
+	fmt.Fprintln(writer, "  run       Attribute a JSON trace")
+	fmt.Fprintln(writer, "  validate  Validate a trace and checker configuration")
+	fmt.Fprintln(writer, "  demo      Run toy, incident, or document")
+	fmt.Fprintln(writer, "")
+	fmt.Fprintln(writer, "Run examples")
+	fmt.Fprintln(writer, "  agenttrace run --input trace.json --checkers checkers.json [--context context.json]")
+	fmt.Fprintln(writer, "  agenttrace validate --input trace.json --checkers checkers.json [--context context.json]")
+	fmt.Fprintln(writer, "  agenttrace demo document --failure extraction")
 }
 
 // runTraceCommand attributes one JSON trace using CEL checker configuration.
@@ -97,10 +178,10 @@ func runTraceCommand(args []string) error {
 		return err
 	}
 	if *inputPath == "" {
-		return fmt.Errorf("run requires --input")
+		return newUsageError("run requires --input")
 	}
 	if *checkersPath == "" {
-		return fmt.Errorf("run requires --checkers")
+		return newUsageError("run requires --checkers")
 	}
 
 	trace, err := loadTrace(*inputPath)
@@ -133,10 +214,10 @@ func validateCommand(args []string) error {
 		return err
 	}
 	if *inputPath == "" {
-		return fmt.Errorf("validate requires --input")
+		return newUsageError("validate requires --input")
 	}
 	if *checkersPath == "" {
-		return fmt.Errorf("validate requires --checkers")
+		return newUsageError("validate requires --checkers")
 	}
 
 	trace, err := loadTrace(*inputPath)
@@ -169,7 +250,7 @@ func validateCommand(args []string) error {
 // Non nil when the demo name is missing, unknown, or unsuccessful.
 func demoCommand(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("demo requires a name: use toy, incident, or document")
+		return newUsageError("demo requires a name: use toy, incident, or document")
 	}
 
 	switch args[0] {
@@ -180,7 +261,7 @@ func demoCommand(args []string) error {
 	case "document":
 		return demoDocumentCommand(args[1:])
 	default:
-		return fmt.Errorf("unknown demo %q: use toy, incident, or document", args[0])
+		return newUsageError("unknown demo %q: use toy, incident, or document", args[0])
 	}
 }
 
@@ -226,7 +307,7 @@ func demoIncidentCommand(args []string) error {
 
 	trace, err := incidentdemo.Run(incidentdemo.FailureMode(*failure))
 	if err != nil {
-		return err
+		return usageError{err: err}
 	}
 	checkers, err := loadCheckers(*checkersPath, trace, *contextPath)
 	if err != nil {
@@ -258,7 +339,7 @@ func demoDocumentCommand(args []string) error {
 
 	trace, err := documentdemo.Run(documentdemo.FailureMode(*failure))
 	if err != nil {
-		return err
+		return usageError{err: err}
 	}
 	if *traceOutputPath != "" {
 		if err := writeTraceFile(*traceOutputPath, trace); err != nil {
@@ -319,10 +400,10 @@ func addOutputFlags(flags *flag.FlagSet) *outputOptions {
 // Non nil when parsing fails or positional arguments remain.
 func parseFlags(flags *flag.FlagSet, args []string) error {
 	if err := flags.Parse(args); err != nil {
-		return fmt.Errorf("parse %s flags: %w", flags.Name(), err)
+		return usageError{err: fmt.Errorf("parse %s flags: %w", flags.Name(), err)}
 	}
 	if flags.NArg() != 0 {
-		return fmt.Errorf("%s does not accept positional arguments", flags.Name())
+		return newUsageError("%s does not accept positional arguments", flags.Name())
 	}
 
 	return nil
@@ -345,7 +426,7 @@ func parseFlags(flags *flag.FlagSet, args []string) error {
 // Non nil when options, graph order, attribution, or output writing fail.
 func executeAttribution(trace attrib.Trace, checkers map[string]attrib.StepChecker, output *outputOptions) error {
 	if output.JSON && output.OutputPath != "" {
-		return fmt.Errorf("json and output cannot be used together")
+		return newUsageError("json and output cannot be used together")
 	}
 
 	orderedSteps, err := attrib.TopologicalSort(trace)
@@ -393,18 +474,14 @@ func executeAttribution(trace attrib.Trace, checkers map[string]attrib.StepCheck
 // error
 // Non nil when a file cannot be opened, decoded, compiled, or closed.
 func loadCheckers(checkersPath string, trace attrib.Trace, contextPath string) (map[string]attrib.StepChecker, error) {
-	file, err := os.Open(checkersPath)
+	data, err := readLimitedFile(checkersPath, maxCheckerFileBytes, "checker configuration")
 	if err != nil {
-		return nil, fmt.Errorf("open checker configuration: %w", err)
+		return nil, err
 	}
 
-	config, decodeErr := checkerconfig.Decode(file)
-	closeErr := file.Close()
-	if decodeErr != nil {
-		return nil, decodeErr
-	}
-	if closeErr != nil {
-		return nil, fmt.Errorf("close checker configuration: %w", closeErr)
+	config, err := checkerconfig.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
 	}
 
 	contextData, err := loadContext(contextPath)
@@ -435,9 +512,9 @@ func loadContext(contextPath string) (json.RawMessage, error) {
 		return nil, nil
 	}
 
-	data, err := os.ReadFile(contextPath)
+	data, err := readLimitedFile(contextPath, maxContextFileBytes, "evaluation context")
 	if err != nil {
-		return nil, fmt.Errorf("read evaluation context: %w", err)
+		return nil, err
 	}
 
 	return json.RawMessage(data), nil
@@ -456,21 +533,56 @@ func loadContext(contextPath string) (json.RawMessage, error) {
 // error
 // Non nil when the JSON file cannot be opened, decoded, or closed.
 func loadTrace(inputPath string) (attrib.Trace, error) {
-	file, err := os.Open(inputPath)
+	data, err := readLimitedFile(inputPath, maxTraceFileBytes, "trace file")
 	if err != nil {
-		return attrib.Trace{}, fmt.Errorf("open trace file: %w", err)
+		return attrib.Trace{}, err
 	}
 
-	trace, decodeErr := attrib.DecodeTrace(file)
-	closeErr := file.Close()
-	if decodeErr != nil {
-		return attrib.Trace{}, decodeErr
-	}
-	if closeErr != nil {
-		return attrib.Trace{}, fmt.Errorf("close trace file: %w", closeErr)
+	trace, err := attrib.DecodeTrace(bytes.NewReader(data))
+	if err != nil {
+		return attrib.Trace{}, err
 	}
 
 	return trace, nil
+}
+
+// readLimitedFile reads a bounded external input file.
+//
+// Input
+// path string
+// Source file path.
+//
+// limit int64
+// Maximum accepted byte count.
+//
+// label string
+// Human readable file type used in errors.
+//
+// Output
+// slice of byte
+// Complete file contents within the configured limit.
+//
+// error
+// Non nil when the file cannot be read or exceeds the limit.
+func readLimitedFile(path string, limit int64, label string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", label, err)
+	}
+
+	data, readErr := io.ReadAll(io.LimitReader(file, limit+1))
+	closeErr := file.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("read %s: %w", label, readErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close %s: %w", label, closeErr)
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%s exceeds byte limit %d", label, limit)
+	}
+
+	return data, nil
 }
 
 // writeResultFile writes an attribution result as JSON.
@@ -698,10 +810,28 @@ func checkStatusText(view stepView) string {
 func compactJSON(data json.RawMessage) string {
 	var output bytes.Buffer
 	if err := json.Compact(&output, data); err != nil {
-		return string(data)
+		return fitEvidenceText(string(data))
 	}
 
-	return output.String()
+	return fitEvidenceText(output.String())
+}
+
+// fitEvidenceText bounds evidence printed in a human report.
+//
+// Input
+// text string
+// Compact evidence text.
+//
+// Output
+// string
+// Original text or a bounded prefix with a truncation marker.
+func fitEvidenceText(text string) string {
+	if len(text) <= maxEvidenceTextSize {
+		return text
+	}
+
+	const marker = "... truncated"
+	return text[:maxEvidenceTextSize-len(marker)] + marker
 }
 
 // affectedStepsText formats downstream impact for the report.
@@ -1464,6 +1594,71 @@ func maxInt(left int, right int) int {
 	return right
 }
 
+// newUsageError creates an error for invalid command usage.
+//
+// Input
+// format string
+// Error message format.
+//
+// values variadic any
+// Values interpolated into the format.
+//
+// Output
+// error
+// Error that maps to the usage exit code.
+func newUsageError(format string, values ...any) error {
+	return usageError{err: fmt.Errorf(format, values...)}
+}
+
+// commandExitCode maps a command error to a process exit code.
+//
+// Input
+// err error
+// Command failure.
+//
+// Output
+// int
+// Stable usage or runtime exit code.
+func commandExitCode(err error) int {
+	var coded interface {
+		ExitCode() int
+	}
+	if errors.As(err, &coded) {
+		return coded.ExitCode()
+	}
+
+	return exitCodeRuntime
+}
+
+// writeCommandError writes a human or JSON error record.
+//
+// Input
+// writer io.Writer
+// Error output destination.
+//
+// err error
+// Command failure to report.
+//
+// format string
+// Output format selected by AGENTTRACE_LOG_FORMAT.
+//
+// Output
+// None
+func writeCommandError(writer io.Writer, err error, format string) {
+	if format == "json" {
+		record := map[string]any{
+			"level":     "error",
+			"message":   err.Error(),
+			"exit_code": commandExitCode(err),
+		}
+		encoder := json.NewEncoder(writer)
+		_ = encoder.Encode(record)
+		return
+	}
+
+	fmt.Fprintf(writer, "error: %v\n", err)
+}
+
 // exitWithError prints an error and exits the program.
 //
 // Input
@@ -1473,6 +1668,6 @@ func maxInt(left int, right int) int {
 // Output
 // None
 func exitWithError(err error) {
-	fmt.Fprintf(os.Stderr, "error: %v\n", err)
-	os.Exit(1)
+	writeCommandError(os.Stderr, err, os.Getenv("AGENTTRACE_LOG_FORMAT"))
+	os.Exit(commandExitCode(err))
 }

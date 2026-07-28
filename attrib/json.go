@@ -69,6 +69,9 @@ func ValidateTraceSchema(trace Trace) error {
 	if len(trace.Steps) == 0 {
 		return fmt.Errorf("trace has no steps")
 	}
+	if len(trace.Steps) > MaxTraceSteps {
+		return fmt.Errorf("trace has %d steps which exceeds limit %d", len(trace.Steps), MaxTraceSteps)
+	}
 
 	for position, step := range trace.Steps {
 		if step.RunID != trace.RunID {
@@ -79,6 +82,14 @@ func ValidateTraceSchema(trace Trace) error {
 		}
 		if strings.TrimSpace(step.AgentName) == "" {
 			return fmt.Errorf("step %q has an empty agent_name", step.StepID)
+		}
+		if len(step.DependsOn) > MaxStepDependencies {
+			return fmt.Errorf(
+				"step %q has %d dependencies which exceeds limit %d",
+				step.StepID,
+				len(step.DependsOn),
+				MaxStepDependencies,
+			)
 		}
 		if len(step.Input) == 0 || !json.Valid(step.Input) {
 			return fmt.Errorf("step %q has invalid input JSON", step.StepID)
@@ -91,6 +102,9 @@ func ValidateTraceSchema(trace Trace) error {
 		}
 		if strings.TrimSpace(step.Status) == "" {
 			return fmt.Errorf("step %q has an empty status", step.StepID)
+		}
+		if step.Confidence != nil && (*step.Confidence < 0 || *step.Confidence > 1) {
+			return fmt.Errorf("step %q has confidence outside zero through one", step.StepID)
 		}
 	}
 

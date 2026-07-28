@@ -1,6 +1,7 @@
 package attrib_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -54,6 +55,16 @@ func TestTopologicalSortRejectsInvalidGraphs(t *testing.T) {
 			wantMessage: "depends on unknown step",
 		},
 		{
+			name: "repeated dependency",
+			trace: attrib.Trace{
+				Steps: []attrib.Step{
+					{StepID: "source"},
+					{StepID: "consumer", DependsOn: []string{"source", "source"}},
+				},
+			},
+			wantMessage: "repeats dependency",
+		},
+		{
 			name: "dependency cycle",
 			trace: attrib.Trace{
 				Steps: []attrib.Step{
@@ -75,6 +86,60 @@ func TestTopologicalSortRejectsInvalidGraphs(t *testing.T) {
 				t.Fatalf("expected error containing %q, got %q", test.wantMessage, err)
 			}
 		})
+	}
+}
+
+func TestTopologicalSortHandlesWideGraphDeterministically(t *testing.T) {
+	const sourceCount = 5000
+
+	steps := make([]attrib.Step, 0, sourceCount+1)
+	dependencies := make([]string, 0, sourceCount)
+	for index := 0; index < sourceCount; index++ {
+		stepID := fmt.Sprintf("source-%04d", index)
+		steps = append(steps, attrib.Step{StepID: stepID})
+		dependencies = append(dependencies, stepID)
+	}
+	steps = append(steps, attrib.Step{
+		StepID:    "final",
+		DependsOn: dependencies,
+	})
+
+	ordered, err := attrib.TopologicalSort(attrib.Trace{Steps: steps})
+	if err != nil {
+		t.Fatalf("TopologicalSort returned error: %v", err)
+	}
+	if len(ordered) != sourceCount+1 {
+		t.Fatalf("expected %d steps, got %d", sourceCount+1, len(ordered))
+	}
+	for index := 0; index < sourceCount; index++ {
+		want := fmt.Sprintf("source-%04d", index)
+		if ordered[index].StepID != want {
+			t.Fatalf("expected %q at position %d, got %q", want, index, ordered[index].StepID)
+		}
+	}
+	if ordered[sourceCount].StepID != "final" {
+		t.Fatalf("expected final step last, got %q", ordered[sourceCount].StepID)
+	}
+}
+
+func BenchmarkTopologicalSortWideGraph(b *testing.B) {
+	const sourceCount = 5000
+
+	steps := make([]attrib.Step, 0, sourceCount+1)
+	dependencies := make([]string, 0, sourceCount)
+	for index := 0; index < sourceCount; index++ {
+		stepID := fmt.Sprintf("source-%04d", index)
+		steps = append(steps, attrib.Step{StepID: stepID})
+		dependencies = append(dependencies, stepID)
+	}
+	steps = append(steps, attrib.Step{StepID: "final", DependsOn: dependencies})
+	trace := attrib.Trace{Steps: steps}
+
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		if _, err := attrib.TopologicalSort(trace); err != nil {
+			b.Fatalf("TopologicalSort returned error: %v", err)
+		}
 	}
 }
 

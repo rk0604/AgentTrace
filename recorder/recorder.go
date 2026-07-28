@@ -224,6 +224,24 @@ func (recorder *Recorder) WriteTrace(writer io.Writer) error {
 	return attrib.EncodeTrace(writer, trace)
 }
 
+// completeStep stores the final state for one recorded step.
+//
+// Input
+// stepID string
+// Identifier of the started step.
+//
+// output any
+// JSON serializable final output.
+//
+// confidence pointer to float64
+// Optional confidence from zero through one.
+//
+// status string
+// Final step status.
+//
+// Output
+// error
+// Non nil when output or lifecycle state is invalid.
 func (recorder *Recorder) completeStep(stepID string, output any, confidence *float64, status string) error {
 	encodedOutput, err := marshalPayload(output, "output")
 	if err != nil {
@@ -252,6 +270,21 @@ func (recorder *Recorder) completeStep(stepID string, output any, confidence *fl
 	return nil
 }
 
+// marshalPayload encodes one domain value as generic JSON.
+//
+// Input
+// value any
+// Domain value to encode.
+//
+// fieldName string
+// Field name used in errors.
+//
+// Output
+// json.RawMessage
+// Encoded JSON value.
+//
+// error
+// Non nil when the value cannot be encoded.
 func marshalPayload(value any, fieldName string) (json.RawMessage, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
@@ -261,6 +294,15 @@ func marshalPayload(value any, fieldName string) (json.RawMessage, error) {
 	return json.RawMessage(encoded), nil
 }
 
+// cloneStep creates an isolated copy of one recorded step.
+//
+// Input
+// step attrib.Step
+// Step to copy.
+//
+// Output
+// attrib.Step
+// Step with copied slices and payloads.
 func cloneStep(step attrib.Step) attrib.Step {
 	cloned := step
 	cloned.DependsOn = append([]string(nil), step.DependsOn...)
@@ -271,6 +313,15 @@ func cloneStep(step attrib.Step) attrib.Step {
 	return cloned
 }
 
+// cloneConfidence copies an optional confidence value.
+//
+// Input
+// confidence pointer to float64
+// Optional value to copy.
+//
+// Output
+// pointer to float64
+// Detached value or nil.
 func cloneConfidence(confidence *float64) *float64 {
 	if confidence == nil {
 		return nil

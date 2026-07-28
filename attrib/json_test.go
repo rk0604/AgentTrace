@@ -135,6 +135,66 @@ func TestEncodeTraceWritesCurrentVersion(t *testing.T) {
 	}
 }
 
+func TestValidateTraceSchemaEnforcesResourceLimits(t *testing.T) {
+	tooManySteps := attrib.Trace{
+		Version: attrib.CurrentTraceVersion,
+		RunID:   "large-run",
+		Steps:   make([]attrib.Step, attrib.MaxTraceSteps+1),
+	}
+	err := attrib.ValidateTraceSchema(tooManySteps)
+	if err == nil || !strings.Contains(err.Error(), "exceeds limit") {
+		t.Fatalf("expected step limit error, got %v", err)
+	}
+
+	dependencies := make([]string, attrib.MaxStepDependencies+1)
+	trace := attrib.Trace{
+		Version: attrib.CurrentTraceVersion,
+		RunID:   "dependency-run",
+		Steps: []attrib.Step{
+			{
+				RunID:     "dependency-run",
+				StepID:    "consumer",
+				AgentName: "Consumer",
+				DependsOn: dependencies,
+				Input:     json.RawMessage(`{}`),
+				Output:    json.RawMessage(`{}`),
+				Timestamp: time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC),
+				Status:    "ok",
+			},
+		},
+	}
+	err = attrib.ValidateTraceSchema(trace)
+	if err == nil || !strings.Contains(err.Error(), "dependencies which exceeds limit") {
+		t.Fatalf("expected dependency limit error, got %v", err)
+	}
+}
+
+func TestValidateTraceSchemaRejectsInvalidConfidence(t *testing.T) {
+	confidence := 1.1
+	trace := attrib.Trace{
+		Version: attrib.CurrentTraceVersion,
+		RunID:   "confidence-run",
+		Steps: []attrib.Step{
+			{
+				RunID:      "confidence-run",
+				StepID:     "source",
+				AgentName:  "Source",
+				Input:      json.RawMessage(`{}`),
+				Output:     json.RawMessage(`{}`),
+				Confidence: &confidence,
+				Timestamp:  time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC),
+				Status:     "ok",
+			},
+		},
+	}
+
+	err := attrib.ValidateTraceSchema(trace)
+
+	if err == nil || !strings.Contains(err.Error(), "confidence outside") {
+		t.Fatalf("expected confidence error, got %v", err)
+	}
+}
+
 func TestDecodeTraceRejectsUnknownSchemaField(t *testing.T) {
 	input := `{"run_id":"run-json","steps":[],"created_at":"not allowed"}`
 

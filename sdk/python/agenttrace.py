@@ -323,6 +323,26 @@ class TraceRecorder:
         confidence: float | None,
         status: str,
     ) -> None:
+        """Store the final state for one recorded step.
+
+        Input
+        step_id str
+        Identifier of the started step.
+
+        output Any
+        JSON serializable final output.
+
+        confidence float or None
+        Optional confidence from zero through one.
+
+        status str
+        Final step status.
+
+        Output
+        None
+        The matching step is completed.
+        """
+
         encoded_output = _json_clone(output, "output")
         if confidence is not None and not 0 <= confidence <= 1:
             raise ValueError(

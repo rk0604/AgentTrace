@@ -1,0 +1,61 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Check Go formatting
+        shell: bash
+        run: test -z "$(find . -name '*.go' -print0 | xargs -0 gofmt -l)"
+
+      - name: Run Go tests with race detection
+        run: go test -race ./...
+
+      - name: Run Go static analysis
+        run: go vet ./...
+
+      - name: Run Python SDK tests
+        working-directory: sdk/python
+        run: python -m unittest -v
+
+      - name: Generate Python integration trace
+        run: python examples/python_recorded_pipeline.py "${{ runner.temp }}/python-trace.json"
+
+      - name: Validate Python integration trace
+        run: >-
+          go run ./cmd/agenttrace validate
+          --input "${{ runner.temp }}/python-trace.json"
+          --checkers ./examples/python-checkers.json
+
+      - name: Run contextual document attribution
+        run: go run ./cmd/agenttrace demo document --failure extraction --json
