@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "run_id": "python-recorded-pipeline",
+  "steps": [
+    {
+      "run_id": "python-recorded-pipeline",
+      "step_id": "document_loader",
+      "agent_name": "Document Loader",
+      "depends_on": [],
+      "input": {
+        "path": "cafe-north-release.txt"
+      },
+      "output": {
+        "document": "Café North reported revenue of $4.2M for Q2."
+      },
+      "model_used": "python-function",
+      "timestamp": "2026-07-28T14:00:00Z",
+      "status": "ok"
+    },
+    {
+      "run_id": "python-recorded-pipeline",
+      "step_id": "information_extractor",
+      "agent_name": "Information Extractor",
+      "depends_on": [
+        "document_loader"
+      ],
+      "input": {
+        "document": "Café North reported revenue of $4.2M for Q2."
+      },
+      "output": {
+        "revenue": "$4.2M",
+        "period": "Q2"
+      },
+      "model_used": "python-function",
+      "timestamp": "2026-07-28T14:00:01Z",
+      "status": "ok",
+      "confidence": 0.96
+    },
+    {
+      "run_id": "python-recorded-pipeline",
+      "step_id": "risk_analyzer",
+      "agent_name": "Risk Analyzer",
+      "depends_on": [
+        "information_extractor"
+      ],
+      "input": {
+        "revenue": "$4.2M",
+        "period": "Q2"
+      },
+      "output": {
+        "risk": "low"
+      },
+      "model_used": "python-function",
+      "timestamp": "2026-07-28T14:00:02Z",
+      "status": "ok",
+      "confidence": 0.91
+    },
+    {
+      "run_id": "python-recorded-pipeline",
+      "step_id": "report_generator",
+      "agent_name": "Report Generator",
+      "depends_on": [
+        "information_extractor",
+        "risk_analyzer"
+      ],
+      "input": {
+        "facts": {
+          "revenue": "$4.2M",
+          "period": "Q2"
+        },
+        "risk": {
+          "risk": "low"
+        }
+      },
+      "output": {
+        "report": "Revenue was $4.2M in Q2 with low risk."
+      },
+      "model_used": "python-function",
+      "timestamp": "2026-07-28T14:00:03Z",
+      "status": "ok"
+    }
+  ]
+}

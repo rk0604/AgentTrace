@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "steps": {
+    "document_loader": {
+      "expression": "output.document == \"Café North reported revenue of $4.2M for Q2.\"",
+      "failure_reason": "Document Loader returned the wrong source text"
+    },
+    "information_extractor": {
+      "expression": "output.revenue == \"$4.2M\" && output.period == \"Q2\"",
+      "failure_reason": "Information Extractor returned incorrect facts"
+    },
+    "risk_analyzer": {
+      "expression": "output.risk == (input.period == \"Q2\" ? \"low\" : \"high\")",
+      "failure_reason": "Risk Analyzer classification does not match its actual input"
+    },
+    "report_generator": {
+      "expression": "output.report == \"Revenue was \" + input.facts.revenue + \" in \" + input.facts.period + \" with \" + input.risk.risk + \" risk.\"",
+      "failure_reason": "Report Generator did not represent its actual inputs"
+    }
+  }
+}
