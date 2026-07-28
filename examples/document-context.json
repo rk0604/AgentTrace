@@ -1,0 +1,21 @@
+{
+  "environment": "document-demo",
+  "expected": {
+    "documents": {
+      "claim": "Claim CLM-104 requests $42,000 for water damage.",
+      "policy": "Policy covers water damage up to $50,000."
+    },
+    "claim": {
+      "claim_id": "CLM-104",
+      "amount": 42000,
+      "incident": "water_damage"
+    },
+    "policy": {
+      "coverage_limit": 50000,
+      "covered": true
+    },
+    "risk": {
+      "high_threshold": 100000
+    }
+  }
+}

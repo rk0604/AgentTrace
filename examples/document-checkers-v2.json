@@ -1,0 +1,81 @@
+{
+  "version": 2,
+  "steps": {
+    "document_loader": {
+      "checks": [
+        {
+          "expression": "isNonEmpty(output.claim_document) && isNonEmpty(output.policy_document)",
+          "failure_reason": "Document Loader returned empty document content"
+        },
+        {
+          "expression": "output.claim_document == expected.documents.claim && output.policy_document == expected.documents.policy",
+          "failure_reason": "Document Loader returned unexpected source documents"
+        }
+      ]
+    },
+    "information_extractor": {
+      "checks": [
+        {
+          "expression": "hasField(output, \"claim_id\") && hasField(output, \"amount\") && hasField(output, \"incident\")",
+          "failure_reason": "Information Extractor omitted a required claim field"
+        },
+        {
+          "expression": "isString(output.claim_id) && isNumber(output.amount) && isString(output.incident)",
+          "failure_reason": "Information Extractor returned an invalid field type"
+        },
+        {
+          "expression": "output.claim_id == expected.claim.claim_id && output.amount == expected.claim.amount && output.incident == expected.claim.incident",
+          "failure_reason": "Information Extractor returned facts that differ from the claim"
+        }
+      ]
+    },
+    "reference_checker": {
+      "checks": [
+        {
+          "expression": "isNumber(output.coverage_limit) && withinRange(output.coverage_limit, 0, 1000000)",
+          "failure_reason": "Reference Checker returned an invalid coverage limit"
+        },
+        {
+          "expression": "output.coverage_limit == expected.policy.coverage_limit && output.covered == expected.policy.covered",
+          "failure_reason": "Reference Checker misread policy coverage"
+        }
+      ]
+    },
+    "risk_analyzer": {
+      "checks": [
+        {
+          "expression": "output.risk == (input.amount > expected.risk.high_threshold ? \"high\" : \"moderate\")",
+          "failure_reason": "Risk Analyzer classification does not match its actual input"
+        },
+        {
+          "expression": "isNonEmpty(output.rationale)",
+          "failure_reason": "Risk Analyzer omitted its rationale"
+        }
+      ]
+    },
+    "evidence_merger": {
+      "checks": [
+        {
+          "expression": "output.eligible == (input.reference.covered && input.claim.amount <= input.reference.coverage_limit)",
+          "failure_reason": "Evidence Merger eligibility does not match its actual inputs"
+        },
+        {
+          "expression": "output.risk == input.risk.risk",
+          "failure_reason": "Evidence Merger changed the supplied risk classification"
+        }
+      ]
+    },
+    "report_generator": {
+      "checks": [
+        {
+          "expression": "output.decision == (input.eligible ? \"approve\" : \"manual_review\")",
+          "failure_reason": "Report Generator decision does not match its actual input"
+        },
+        {
+          "expression": "output.summary == \"Decision is \" + output.decision + \" with \" + input.risk + \" risk.\"",
+          "failure_reason": "Report Generator summary does not represent its decision"
+        }
+      ]
+    }
+  }
+}

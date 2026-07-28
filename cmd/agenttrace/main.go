@@ -10,6 +10,7 @@ import (
 
 	"github.com/rk0604/AgentTrace/attrib"
 	"github.com/rk0604/AgentTrace/checkerconfig"
+	"github.com/rk0604/AgentTrace/documentdemo"
 	"github.com/rk0604/AgentTrace/incidentdemo"
 	"github.com/rk0604/AgentTrace/toypipeline"
 )
@@ -166,7 +167,7 @@ func validateCommand(args []string) error {
 // Non nil when the demo name is missing, unknown, or unsuccessful.
 func demoCommand(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("demo requires a name: use toy or incident")
+		return fmt.Errorf("demo requires a name: use toy, incident, or document")
 	}
 
 	switch args[0] {
@@ -174,8 +175,10 @@ func demoCommand(args []string) error {
 		return demoToyCommand(args[1:])
 	case "incident":
 		return demoIncidentCommand(args[1:])
+	case "document":
+		return demoDocumentCommand(args[1:])
 	default:
-		return fmt.Errorf("unknown demo %q: use toy or incident", args[0])
+		return fmt.Errorf("unknown demo %q: use toy, incident, or document", args[0])
 	}
 }
 
@@ -223,6 +226,44 @@ func demoIncidentCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	checkers, err := loadCheckers(*checkersPath, trace, *contextPath)
+	if err != nil {
+		return err
+	}
+
+	return executeAttribution(trace, checkers, output)
+}
+
+// demoDocumentCommand runs the recorder based document review pipeline.
+//
+// Input
+// args slice of string
+// Flags selecting failure mode, checker context, trace output, and result output.
+//
+// Output
+// error
+// Non nil when flags, recording, configuration, or attribution fail.
+func demoDocumentCommand(args []string) error {
+	flags := newFlagSet("demo document")
+	failure := flags.String("failure", string(documentdemo.FailureExtraction), "select none, extraction, or reference")
+	checkersPath := flags.String("checkers", "examples/document-checkers-v2.json", "read CEL step checkers from a JSON configuration file")
+	contextPath := flags.String("context", "examples/document-context.json", "read evaluation context from a JSON file")
+	traceOutputPath := flags.String("trace-output", "", "write the recorded JSON trace to a file")
+	output := addOutputFlags(flags)
+	if err := parseFlags(flags, args); err != nil {
+		return err
+	}
+
+	trace, err := documentdemo.Run(documentdemo.FailureMode(*failure))
+	if err != nil {
+		return err
+	}
+	if *traceOutputPath != "" {
+		if err := writeTraceFile(*traceOutputPath, trace); err != nil {
+			return err
+		}
+	}
+
 	checkers, err := loadCheckers(*checkersPath, trace, *contextPath)
 	if err != nil {
 		return err
@@ -455,6 +496,36 @@ func writeResultFile(outputPath string, result attrib.AttributionResult) error {
 	}
 	if closeErr != nil {
 		return fmt.Errorf("close result file: %w", closeErr)
+	}
+
+	return nil
+}
+
+// writeTraceFile writes a completed trace as versioned JSON.
+//
+// Input
+// outputPath string
+// Destination JSON file path.
+//
+// trace attrib.Trace
+// Completed generic trace.
+//
+// Output
+// error
+// Non nil when the file cannot be created, encoded, or closed.
+func writeTraceFile(outputPath string, trace attrib.Trace) error {
+	file, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("create trace file: %w", err)
+	}
+
+	encodeErr := attrib.EncodeTrace(file, trace)
+	closeErr := file.Close()
+	if encodeErr != nil {
+		return encodeErr
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close trace file: %w", closeErr)
 	}
 
 	return nil

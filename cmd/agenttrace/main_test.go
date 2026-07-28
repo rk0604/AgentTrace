@@ -100,6 +100,34 @@ func TestIncidentDemoRejectsUnknownFailureMode(t *testing.T) {
 	assertErrorContains(t, err, `unsupported incident failure mode "unknown"`)
 }
 
+func TestDocumentDemoRejectsUnknownFailureMode(t *testing.T) {
+	err := demoDocumentCommand([]string{"--failure", "unknown"})
+	assertErrorContains(t, err, `unsupported document failure mode "unknown"`)
+}
+
+func TestDocumentDemoWritesRecordedTrace(t *testing.T) {
+	tracePath := filepath.Join(t.TempDir(), "document-trace.json")
+
+	err := demoDocumentCommand([]string{
+		"--failure", "none",
+		"--trace-output", tracePath,
+		"--checkers", filepath.Join("..", "..", "examples", "document-checkers-v2.json"),
+		"--context", filepath.Join("..", "..", "examples", "document-context.json"),
+		"--json",
+	})
+	if err != nil {
+		t.Fatalf("demoDocumentCommand returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(tracePath)
+	if err != nil {
+		t.Fatalf("read recorded trace: %v", err)
+	}
+	if !strings.Contains(string(data), `"version": 1`) {
+		t.Fatalf("expected versioned trace, got %s", data)
+	}
+}
+
 // assertErrorContains verifies that an error contains the expected text.
 //
 // Input
