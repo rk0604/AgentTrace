@@ -68,6 +68,18 @@ func TestDocumentConfigurationAttributesFailureModes(t *testing.T) {
 			if result.RootCause == nil || result.RootCause.StepID != test.wantRootCause {
 				t.Fatalf("expected root cause %q, got %+v", test.wantRootCause, result.RootCause)
 			}
+			if result.RootCause.Expression == "" {
+				t.Fatal("expected failed expression evidence")
+			}
+			if len(result.RootCause.Input) == 0 || len(result.RootCause.Output) == 0 {
+				t.Fatal("expected input and output evidence")
+			}
+			if len(result.RootCause.Expected) == 0 {
+				t.Fatal("expected ground truth evidence")
+			}
+			if len(result.AffectedStepIDs) == 0 {
+				t.Fatal("expected downstream impact")
+			}
 		})
 	}
 }

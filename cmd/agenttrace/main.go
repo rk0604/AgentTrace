@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -21,10 +22,11 @@ type outputOptions struct {
 }
 
 type stepView struct {
-	Step    attrib.Step
-	Checked bool
-	Failed  bool
-	Reason  string
+	Step     attrib.Step
+	Checked  bool
+	Failed   bool
+	Affected bool
+	Reason   string
 }
 
 type graphLevel struct {
@@ -363,7 +365,7 @@ func executeAttribution(trace attrib.Trace, checkers map[string]attrib.StepCheck
 		}
 	}
 
-	stepViews := buildStepViews(orderedSteps, result, checkers)
+	stepViews := buildStepViews(orderedSteps, result)
 	printReport(trace, stepViews, result)
 	if output.OutputPath != "" {
 		fmt.Printf("\nJSON result written to %s\n", output.OutputPath)
@@ -540,32 +542,24 @@ func writeTraceFile(outputPath string, trace attrib.Trace) error {
 // result attrib.AttributionResult
 // The attribution result returned by attrib.FindRootCause.
 //
-// checkers map[string]attrib.StepChecker
-// Step checker functions keyed by step ID.
-//
 // Output
 // []stepView
 // Display rows with check status and failure reason.
-func buildStepViews(orderedSteps []attrib.Step, result attrib.AttributionResult, checkers map[string]attrib.StepChecker) []stepView {
+func buildStepViews(orderedSteps []attrib.Step, result attrib.AttributionResult) []stepView {
 	checkedIDs := checkedStepSet(result.CheckedStepIDs)
+	affectedIDs := checkedStepSet(result.AffectedStepIDs)
 	views := make([]stepView, 0, len(orderedSteps))
 
 	for _, step := range orderedSteps {
 		view := stepView{
-			Step:    step,
-			Checked: checkedIDs[step.StepID],
+			Step:     step,
+			Checked:  checkedIDs[step.StepID],
+			Affected: affectedIDs[step.StepID],
 		}
 
-		if view.Checked {
-			// Reuse the same checker functions so the report matches attribution.
-			check, err := checkers[step.StepID](step)
-			if err != nil {
-				view.Failed = true
-				view.Reason = err.Error()
-			} else if !check.Passed {
-				view.Failed = true
-				view.Reason = check.Reason
-			}
+		if result.RootCause != nil && result.RootCause.StepID == step.StepID {
+			view.Failed = true
+			view.Reason = result.RootCause.Reason
 		}
 
 		views = append(views, view)
@@ -633,7 +627,21 @@ func printReport(trace attrib.Trace, views []stepView, result attrib.Attribution
 
 	fmt.Printf("Root cause step: %s\n", result.RootCause.StepID)
 	fmt.Printf("Root cause agent: %s\n", result.RootCause.AgentName)
-	fmt.Printf("Root cause reason: %s\n\n", result.RootCause.Reason)
+	fmt.Printf("Root cause reason: %s\n", result.RootCause.Reason)
+	if result.RootCause.Expression != "" {
+		fmt.Printf("Failed expression: %s\n", result.RootCause.Expression)
+	}
+	if len(result.RootCause.Input) > 0 {
+		fmt.Printf("Actual input: %s\n", compactJSON(result.RootCause.Input))
+	}
+	if len(result.RootCause.Output) > 0 {
+		fmt.Printf("Actual output: %s\n", compactJSON(result.RootCause.Output))
+	}
+	if len(result.RootCause.Expected) > 0 {
+		fmt.Printf("Expected context: %s\n", compactJSON(result.RootCause.Expected))
+	}
+	fmt.Printf("Affected steps: %s\n", affectedStepsText(result.AffectedStepIDs))
+	fmt.Printf("\n")
 
 	printFlowChart(views, result)
 }
@@ -666,6 +674,9 @@ func dependsOnText(dependsOn []string) string {
 // Human readable check status.
 func checkStatusText(view stepView) string {
 	if !view.Checked {
+		if view.Affected {
+			return "affected by upstream failure"
+		}
 		return "not checked because attribution stopped earlier"
 	}
 	if view.Failed {
@@ -673,6 +684,41 @@ func checkStatusText(view stepView) string {
 	}
 
 	return "passed"
+}
+
+// compactJSON formats raw JSON on one line.
+//
+// Input
+// data json.RawMessage
+// JSON value to display.
+//
+// Output
+// string
+// Compact JSON or the original text when compaction fails.
+func compactJSON(data json.RawMessage) string {
+	var output bytes.Buffer
+	if err := json.Compact(&output, data); err != nil {
+		return string(data)
+	}
+
+	return output.String()
+}
+
+// affectedStepsText formats downstream impact for the report.
+//
+// Input
+// stepIDs slice of string
+// Affected step IDs in dependency order.
+//
+// Output
+// string
+// Comma separated IDs or none.
+func affectedStepsText(stepIDs []string) string {
+	if len(stepIDs) == 0 {
+		return "none"
+	}
+
+	return strings.Join(stepIDs, ", ")
 }
 
 // printFlowChart writes a generic dependency graph flow chart.
@@ -690,7 +736,7 @@ func printFlowChart(views []stepView, result attrib.AttributionResult) {
 	viewsByID := stepViewByID(views)
 	levelsByID := graphLevelsByID(views, viewsByID)
 	levels := graphLevels(views, levelsByID)
-	edges := graphEdges(views, viewsByID, result)
+	edges := graphEdges(views, viewsByID, levelsByID, result)
 
 	fmt.Printf("Flow chart\n")
 	fmt.Printf("\n")
@@ -1052,13 +1098,21 @@ func graphLevels(views []stepView, levelsByID map[string]int) []graphLevel {
 // viewsByID map[string]stepView
 // Lookup table keyed by step ID.
 //
+// levelsByID map[string]int
+// Visual level keyed by step ID.
+//
 // result attrib.AttributionResult
 // Root cause attribution result.
 //
 // Output
 // []graphEdge
 // Dependency edges with cause markers when applicable.
-func graphEdges(views []stepView, viewsByID map[string]stepView, result attrib.AttributionResult) []graphEdge {
+func graphEdges(
+	views []stepView,
+	viewsByID map[string]stepView,
+	levelsByID map[string]int,
+	result attrib.AttributionResult,
+) []graphEdge {
 	edges := make([]graphEdge, 0)
 
 	for _, target := range views {
@@ -1071,7 +1125,7 @@ func graphEdges(views []stepView, viewsByID map[string]stepView, result attrib.A
 			edges = append(edges, graphEdge{
 				Source: source,
 				Target: target,
-				Cause:  isCauseEdge(sourceID, result),
+				Cause:  isCauseEdge(sourceID, target.Step.StepID, levelsByID, result),
 			})
 		}
 	}
@@ -1083,7 +1137,13 @@ func graphEdges(views []stepView, viewsByID map[string]stepView, result attrib.A
 //
 // Input
 // sourceID string
-// Step ID for the upstream edge source.
+// Step ID for the edge source.
+//
+// targetID string
+// Step ID for the edge target.
+//
+// levelsByID map[string]int
+// Visual level keyed by step ID.
 //
 // result attrib.AttributionResult
 // Root cause attribution result.
@@ -1091,8 +1151,26 @@ func graphEdges(views []stepView, viewsByID map[string]stepView, result attrib.A
 // Output
 // bool
 // True when the edge leaves the root cause step.
-func isCauseEdge(sourceID string, result attrib.AttributionResult) bool {
-	return result.RootCause != nil && sourceID == result.RootCause.StepID
+func isCauseEdge(
+	sourceID string,
+	targetID string,
+	levelsByID map[string]int,
+	result attrib.AttributionResult,
+) bool {
+	if result.RootCause == nil || result.RootCause.StepID != sourceID {
+		return false
+	}
+	if levelsByID[targetID] != levelsByID[sourceID]+1 {
+		return false
+	}
+
+	for _, edge := range result.CauseEdges {
+		if edge.FromStepID == sourceID && edge.ToStepID == targetID {
+			return true
+		}
+	}
+
+	return false
 }
 
 // printLevelBoxes writes boxes for all nodes in one graph level.
@@ -1252,6 +1330,9 @@ func edgeText(edge graphEdge) string {
 // Compact node status text.
 func chartStatusText(view stepView) string {
 	if !view.Checked {
+		if view.Affected {
+			return "AFFECTED"
+		}
 		return "SKIPPED"
 	}
 	if view.Failed {

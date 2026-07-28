@@ -34,9 +34,10 @@ type compiledCheck struct {
 }
 
 type baseActivation struct {
-	run      map[string]any
-	context  map[string]any
-	expected any
+	run          map[string]any
+	context      map[string]any
+	expected     any
+	expectedJSON json.RawMessage
 }
 
 // Build compiles configured CEL expressions without external context.
@@ -291,7 +292,11 @@ func configuredChecker(checks []compiledCheck, base baseActivation, timeout time
 				)
 			}
 			if !passed {
-				return attrib.Fail(check.failureReason), nil
+				return attrib.FailWithEvidence(
+					check.failureReason,
+					check.expression,
+					base.expectedJSON,
+				), nil
 			}
 		}
 
@@ -327,8 +332,15 @@ func buildBaseActivation(options BuildOptions) (baseActivation, error) {
 	}
 
 	expected := any(map[string]any{})
+	var expectedJSON json.RawMessage
 	if configuredExpected, exists := contextValue["expected"]; exists {
 		expected = configuredExpected
+
+		encodedExpected, err := json.Marshal(configuredExpected)
+		if err != nil {
+			return baseActivation{}, fmt.Errorf("encode expected context: %w", err)
+		}
+		expectedJSON = json.RawMessage(encodedExpected)
 	}
 
 	run := map[string]any{}
@@ -345,9 +357,10 @@ func buildBaseActivation(options BuildOptions) (baseActivation, error) {
 	}
 
 	return baseActivation{
-		run:      run,
-		context:  contextValue,
-		expected: expected,
+		run:          run,
+		context:      contextValue,
+		expected:     expected,
+		expectedJSON: expectedJSON,
 	}, nil
 }
 

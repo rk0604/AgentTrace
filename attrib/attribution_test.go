@@ -1,6 +1,7 @@
 package attrib_test
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -73,6 +74,73 @@ func TestFindRootCauseReturnsPassedWhenEveryStepPasses(t *testing.T) {
 		t.Fatalf("expected no root cause, got %+v", result.RootCause)
 	}
 	assertStrings(t, result.CheckedStepIDs, []string{"source", "final"})
+}
+
+func TestFindRootCauseReturnsEvidenceAndDownstreamImpact(t *testing.T) {
+	trace := attrib.Trace{
+		RunID: "evidence-run",
+		Steps: []attrib.Step{
+			{
+				StepID: "source",
+				Input:  json.RawMessage(`{"document":"input"}`),
+				Output: json.RawMessage(`{"value":"wrong"}`),
+			},
+			{StepID: "left", DependsOn: []string{"source"}},
+			{StepID: "right", DependsOn: []string{"source"}},
+			{StepID: "merge", DependsOn: []string{"left", "right"}},
+			{StepID: "independent"},
+		},
+	}
+	expected := json.RawMessage(`{"value":"correct"}`)
+	checkers := map[string]attrib.StepChecker{
+		"source": func(attrib.Step) (attrib.CheckResult, error) {
+			return attrib.FailWithEvidence(
+				"Source returned the wrong value",
+				"output.value == expected.value",
+				expected,
+			), nil
+		},
+		"left":        func(attrib.Step) (attrib.CheckResult, error) { return attrib.Pass(), nil },
+		"right":       func(attrib.Step) (attrib.CheckResult, error) { return attrib.Pass(), nil },
+		"merge":       func(attrib.Step) (attrib.CheckResult, error) { return attrib.Pass(), nil },
+		"independent": func(attrib.Step) (attrib.CheckResult, error) { return attrib.Pass(), nil },
+	}
+
+	result, err := attrib.FindRootCause(trace, checkers)
+	if err != nil {
+		t.Fatalf("FindRootCause returned error: %v", err)
+	}
+	if result.RootCause == nil {
+		t.Fatal("expected a root cause")
+	}
+	if result.RootCause.Expression != "output.value == expected.value" {
+		t.Fatalf("unexpected expression %q", result.RootCause.Expression)
+	}
+	if string(result.RootCause.Input) != `{"document":"input"}` {
+		t.Fatalf("unexpected input evidence %s", result.RootCause.Input)
+	}
+	if string(result.RootCause.Output) != `{"value":"wrong"}` {
+		t.Fatalf("unexpected output evidence %s", result.RootCause.Output)
+	}
+	if string(result.RootCause.Expected) != string(expected) {
+		t.Fatalf("unexpected expected evidence %s", result.RootCause.Expected)
+	}
+	assertStrings(t, result.AffectedStepIDs, []string{"left", "right", "merge"})
+
+	wantEdges := []attrib.CauseEdge{
+		{FromStepID: "source", ToStepID: "left"},
+		{FromStepID: "source", ToStepID: "right"},
+		{FromStepID: "left", ToStepID: "merge"},
+		{FromStepID: "right", ToStepID: "merge"},
+	}
+	if len(result.CauseEdges) != len(wantEdges) {
+		t.Fatalf("expected cause edges %v, got %v", wantEdges, result.CauseEdges)
+	}
+	for index := range wantEdges {
+		if result.CauseEdges[index] != wantEdges[index] {
+			t.Fatalf("expected cause edges %v, got %v", wantEdges, result.CauseEdges)
+		}
+	}
 }
 
 func TestFindRootCauseReturnsErrorForMissingChecker(t *testing.T) {

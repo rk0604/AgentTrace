@@ -1,25 +1,42 @@
 package attrib
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 type StepChecker func(Step) (CheckResult, error)
 
 type CheckResult struct {
-	Passed bool
-	Reason string
+	Passed     bool
+	Reason     string
+	Expression string
+	Expected   json.RawMessage
 }
 
 type RootCause struct {
-	StepID    string `json:"step_id"`
-	AgentName string `json:"agent_name"`
-	Reason    string `json:"reason"`
+	StepID     string          `json:"step_id"`
+	AgentName  string          `json:"agent_name"`
+	Reason     string          `json:"reason"`
+	Expression string          `json:"expression,omitempty"`
+	Input      json.RawMessage `json:"input,omitempty"`
+	Output     json.RawMessage `json:"output,omitempty"`
+	Expected   json.RawMessage `json:"expected,omitempty"`
+}
+
+// CauseEdge identifies one downstream propagation edge.
+type CauseEdge struct {
+	FromStepID string `json:"from_step_id"`
+	ToStepID   string `json:"to_step_id"`
 }
 
 type AttributionResult struct {
-	RunID          string     `json:"run_id"`
-	Status         string     `json:"status"`
-	RootCause      *RootCause `json:"root_cause,omitempty"`
-	CheckedStepIDs []string   `json:"checked_step_ids"`
+	RunID           string      `json:"run_id"`
+	Status          string      `json:"status"`
+	RootCause       *RootCause  `json:"root_cause,omitempty"`
+	CheckedStepIDs  []string    `json:"checked_step_ids"`
+	AffectedStepIDs []string    `json:"affected_step_ids,omitempty"`
+	CauseEdges      []CauseEdge `json:"cause_edges,omitempty"`
 }
 
 func FindRootCause(trace Trace, checkers map[string]StepChecker) (AttributionResult, error) {
@@ -48,12 +65,19 @@ func FindRootCause(trace Trace, checkers map[string]StepChecker) (AttributionRes
 
 		result.CheckedStepIDs = append(result.CheckedStepIDs, step.StepID)
 		if !check.Passed {
+			affectedStepIDs, causeEdges := downstreamImpact(orderedSteps, step.StepID)
 			result.Status = "failed"
 			result.RootCause = &RootCause{
-				StepID:    step.StepID,
-				AgentName: step.AgentName,
-				Reason:    check.Reason,
+				StepID:     step.StepID,
+				AgentName:  step.AgentName,
+				Reason:     check.Reason,
+				Expression: check.Expression,
+				Input:      cloneRawMessage(step.Input),
+				Output:     cloneRawMessage(step.Output),
+				Expected:   cloneRawMessage(check.Expected),
 			}
+			result.AffectedStepIDs = affectedStepIDs
+			result.CauseEdges = causeEdges
 			return result, nil
 		}
 	}
@@ -111,4 +135,82 @@ func Pass() CheckResult {
 
 func Fail(reason string) CheckResult {
 	return CheckResult{Passed: false, Reason: reason}
+}
+
+// FailWithEvidence creates a failed check with evaluator evidence.
+//
+// Input
+// reason string
+// Human readable failure explanation.
+//
+// expression string
+// Correctness expression that returned false.
+//
+// expected json.RawMessage
+// Optional expected evaluation context.
+//
+// Output
+// CheckResult
+// Failed check result containing copied evidence.
+func FailWithEvidence(reason string, expression string, expected json.RawMessage) CheckResult {
+	return CheckResult{
+		Passed:     false,
+		Reason:     reason,
+		Expression: expression,
+		Expected:   cloneRawMessage(expected),
+	}
+}
+
+// downstreamImpact finds every descendant of the root cause.
+//
+// Input
+// orderedSteps slice of Step
+// Trace steps in dependency order.
+//
+// rootCauseStepID string
+// Step that introduced the failed output.
+//
+// Output
+// slice of string
+// Descendant step IDs in dependency order.
+//
+// slice of CauseEdge
+// Dependency edges that carry data from the failed branch.
+func downstreamImpact(orderedSteps []Step, rootCauseStepID string) ([]string, []CauseEdge) {
+	affected := map[string]bool{rootCauseStepID: true}
+	affectedStepIDs := make([]string, 0)
+	causeEdges := make([]CauseEdge, 0)
+
+	for _, step := range orderedSteps {
+		if step.StepID == rootCauseStepID {
+			continue
+		}
+
+		stepAffected := false
+		for _, dependencyID := range step.DependsOn {
+			if !affected[dependencyID] {
+				continue
+			}
+
+			stepAffected = true
+			causeEdges = append(causeEdges, CauseEdge{
+				FromStepID: dependencyID,
+				ToStepID:   step.StepID,
+			})
+		}
+		if stepAffected {
+			affected[step.StepID] = true
+			affectedStepIDs = append(affectedStepIDs, step.StepID)
+		}
+	}
+
+	return affectedStepIDs, causeEdges
+}
+
+func cloneRawMessage(message json.RawMessage) json.RawMessage {
+	if len(message) == 0 {
+		return nil
+	}
+
+	return append(json.RawMessage(nil), message...)
 }
