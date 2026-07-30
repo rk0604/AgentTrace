@@ -6,13 +6,23 @@ import asyncio
 import copy
 import json
 import os
+import random
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 from . import contracts, prompts
 
 
 DEFAULT_REPLAY_DIRECTORY = Path(__file__).resolve().parent / "replays"
+RETRYABLE_STATUS_CODES = frozenset({408, 409, 429})
+RETRYABLE_ERROR_NAMES = frozenset(
+    {
+        "APIConnectionError",
+        "APITimeoutError",
+        "InternalServerError",
+        "RateLimitError",
+    }
+)
 
 
 class ModelRuntimeError(RuntimeError):
@@ -223,6 +233,8 @@ class OpenAIModelClient:
         max_attempts: int = 2,
         timeout_seconds: float = 45.0,
         retry_delay_seconds: float = 0.25,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        random_value: Callable[[], float] = random.random,
     ) -> None:
         """Create a live model client.
 
@@ -240,7 +252,13 @@ class OpenAIModelClient:
         Deadline for each request.
 
         retry_delay_seconds float
-        Delay between attempts.
+        Initial delay between attempts.
+
+        sleep Callable accepting float and returning Awaitable of None
+        Async delay function used between attempts.
+
+        random_value Callable returning float
+        Random value provider used to add retry jitter.
 
         Output
         None
@@ -261,6 +279,8 @@ class OpenAIModelClient:
         self._max_attempts = max_attempts
         self._timeout_seconds = timeout_seconds
         self._retry_delay_seconds = retry_delay_seconds
+        self._sleep = sleep
+        self._random_value = random_value
 
     @property
     def model_name(self) -> str:
@@ -321,11 +341,7 @@ class OpenAIModelClient:
         for attempt in range(1, self._max_attempts + 1):
             try:
                 output = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self._request,
-                        step_id,
-                        input_data,
-                    ),
+                    self._request(step_id, input_data),
                     timeout=self._timeout_seconds,
                 )
                 contracts.validate_output(step_id, output)
@@ -334,20 +350,24 @@ class OpenAIModelClient:
                 raise
             except Exception as error:
                 last_error = error
-                if attempt < self._max_attempts:
-                    await asyncio.sleep(self._retry_delay_seconds)
+                if (
+                    attempt >= self._max_attempts
+                    or not _is_retryable_provider_error(error)
+                ):
+                    break
+                await self._sleep(self._retry_delay(attempt))
 
         raise ModelRuntimeError(
             f"model step {step_id!r} failed after "
-            f"{self._max_attempts} attempts: {last_error}"
+            f"{attempt} attempts: {last_error}"
         ) from last_error
 
-    def _request(
+    async def _request(
         self,
         step_id: str,
         input_data: Any,
     ) -> dict[str, Any]:
-        """Perform one synchronous Responses API request.
+        """Perform one asynchronous Responses API request.
 
         Input
         step_id str
@@ -361,8 +381,8 @@ class OpenAIModelClient:
         Decoded JSON response.
         """
 
-        client = self._client or self._create_client()
-        response = client.responses.create(
+        client = self._get_client()
+        response = await client.responses.create(
             model=self._model,
             input=[
                 {
@@ -401,19 +421,34 @@ class OpenAIModelClient:
             )
         return output
 
-    def _create_client(self) -> Any:
-        """Create the optional OpenAI SDK client.
+    def _get_client(self) -> Any:
+        """Return the shared asynchronous OpenAI client.
 
         Input
         None
 
         Output
         Any
-        OpenAI client exposing responses.create.
+        Existing or newly created client exposing responses.create.
+        """
+
+        if self._client is None:
+            self._client = self._create_client()
+        return self._client
+
+    def _create_client(self) -> Any:
+        """Create the optional asynchronous OpenAI SDK client.
+
+        Input
+        None
+
+        Output
+        Any
+        AsyncOpenAI client exposing responses.create.
         """
 
         try:
-            from openai import OpenAI
+            from openai import AsyncOpenAI
         except ImportError as error:
             raise ModelRuntimeError(
                 "live mode requires: "
@@ -421,8 +456,51 @@ class OpenAIModelClient:
                 "./examples/incident_agent_pipeline/requirements-live.txt"
             ) from error
 
-        self._client = OpenAI()
-        return self._client
+        return AsyncOpenAI(
+            max_retries=0,
+            timeout=self._timeout_seconds,
+        )
+
+    def _retry_delay(self, attempt: int) -> float:
+        """Calculate exponential retry delay with bounded jitter.
+
+        Input
+        attempt int
+        Request attempt that just failed.
+
+        Output
+        float
+        Delay in seconds before the next attempt.
+        """
+
+        base_delay = self._retry_delay_seconds * (2 ** (attempt - 1))
+        jitter = base_delay * 0.25 * self._random_value()
+        return base_delay + jitter
+
+
+def _is_retryable_provider_error(error: Exception) -> bool:
+    """Report whether a provider failure can be retried.
+
+    Input
+    error Exception
+    Failure raised by the request path.
+
+    Output
+    bool
+    True for connection, timeout, rate limit, and server failures.
+    """
+
+    if isinstance(error, (ConnectionError, TimeoutError)):
+        return True
+
+    status_code = getattr(error, "status_code", None)
+    if isinstance(status_code, int):
+        return (
+            status_code in RETRYABLE_STATUS_CODES
+            or status_code >= 500
+        )
+
+    return type(error).__name__ in RETRYABLE_ERROR_NAMES
 
 
 def failure_override(

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
-import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,10 +40,10 @@ class FakeResponses:
         Structured output returned after failures.
 
         failures int
-        Number of calls that raise before success.
+        Number of transient calls that raise before success.
 
         delay_seconds float
-        Blocking delay applied to every request.
+        Async delay applied to every request.
 
         Output
         None
@@ -54,8 +54,10 @@ class FakeResponses:
         self.failures = failures
         self.delay_seconds = delay_seconds
         self.calls: list[dict[str, Any]] = []
+        self.active_requests = 0
+        self.cancelled_requests = 0
 
-    def create(self, **values: Any) -> SimpleNamespace:
+    async def create(self, **values: Any) -> SimpleNamespace:
         """Return one fake Responses API result.
 
         Input
@@ -68,11 +70,28 @@ class FakeResponses:
         """
 
         self.calls.append(values)
-        if self.delay_seconds:
-            time.sleep(self.delay_seconds)
-        if len(self.calls) <= self.failures:
-            raise RuntimeError("temporary provider failure")
-        return SimpleNamespace(output_text=json.dumps(self.output))
+        self.active_requests += 1
+        try:
+            if self.delay_seconds:
+                await asyncio.sleep(self.delay_seconds)
+            if len(self.calls) <= self.failures:
+                raise FakeProviderError(503)
+            return SimpleNamespace(output_text=json.dumps(self.output))
+        except asyncio.CancelledError:
+            self.cancelled_requests += 1
+            raise
+        finally:
+            self.active_requests -= 1
+
+
+class FakeProviderError(RuntimeError):
+    """Represents one provider HTTP failure."""
+
+    def __init__(self, status_code: int) -> None:
+        """Create a provider failure with an HTTP status code."""
+
+        super().__init__(f"provider returned {status_code}")
+        self.status_code = status_code
 
 
 class FakeOpenAI:
@@ -158,12 +177,65 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, output)
         self.assertEqual(len(responses.calls), 2)
 
+    async def test_openai_client_does_not_retry_bad_request(self) -> None:
+        """Confirm that a permanent provider error is returned immediately."""
+
+        output = await ReplayModelClient.from_directory("none").generate(
+            contracts.INVESTIGATION_PLANNER,
+            {},
+        )
+        responses = FakeResponses(output)
+
+        async def bad_request(**values: Any) -> SimpleNamespace:
+            responses.calls.append(values)
+            raise FakeProviderError(400)
+
+        responses.create = bad_request  # type: ignore[method-assign]
+        client = OpenAIModelClient(
+            model="test-model",
+            client=FakeOpenAI(responses),
+            max_attempts=3,
+            retry_delay_seconds=0,
+        )
+
+        with self.assertRaisesRegex(ModelRuntimeError, "after 1 attempts"):
+            await client.generate(contracts.INVESTIGATION_PLANNER, {})
+
+        self.assertEqual(len(responses.calls), 1)
+
+    async def test_openai_client_uses_exponential_retry_delays(self) -> None:
+        """Confirm that retry delays grow and include bounded jitter."""
+
+        output = await ReplayModelClient.from_directory("none").generate(
+            contracts.INVESTIGATION_PLANNER,
+            {},
+        )
+        responses = FakeResponses(output, failures=2)
+        delays: list[float] = []
+
+        async def record_delay(seconds: float) -> None:
+            delays.append(seconds)
+
+        client = OpenAIModelClient(
+            model="test-model",
+            client=FakeOpenAI(responses),
+            max_attempts=3,
+            retry_delay_seconds=0.5,
+            sleep=record_delay,
+            random_value=lambda: 1.0,
+        )
+
+        result = await client.generate(contracts.INVESTIGATION_PLANNER, {})
+
+        self.assertEqual(result, output)
+        self.assertEqual(delays, [0.625, 1.25])
+
     async def test_openai_client_rejects_malformed_output(self) -> None:
         """Confirm that invalid provider JSON becomes a runtime error."""
 
         responses = FakeResponses({})
 
-        def malformed_create(**values: Any) -> SimpleNamespace:
+        async def malformed_create(**values: Any) -> SimpleNamespace:
             responses.calls.append(values)
             return SimpleNamespace(output_text="{not-json")
 
@@ -176,6 +248,7 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(ModelRuntimeError, "failed after 1 attempts"):
             await client.generate(contracts.LOG_ANALYZER, {})
+        self.assertEqual(len(responses.calls), 1)
 
     async def test_openai_client_times_out(self) -> None:
         """Confirm that a slow provider request respects its deadline."""
@@ -194,6 +267,9 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(ModelRuntimeError, "failed after 1 attempts"):
             await client.generate(contracts.LOG_ANALYZER, {})
+
+        self.assertEqual(responses.cancelled_requests, 1)
+        self.assertEqual(responses.active_requests, 0)
 
 
 if __name__ == "__main__":
