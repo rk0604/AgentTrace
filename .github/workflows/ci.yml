@@ -7,6 +7,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
 concurrency:
   group: verify-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -34,10 +37,16 @@ jobs:
       - name: Download Go modules
         run: go mod download
 
+      - name: Verify Go modules
+        run: go mod verify
+
       - name: Install incident pipeline dependencies
         run: >-
           python -m pip install
           -r examples/incident_agent_pipeline/requirements.txt
+
+      - name: Verify Python dependencies
+        run: python -m pip check
 
       - name: Check Go formatting
         shell: bash
@@ -48,6 +57,23 @@ jobs:
 
       - name: Run Go static analysis
         run: go vet ./...
+
+      - name: Enforce Go coverage floor
+        shell: bash
+        run: |
+          go test ./... -coverprofile "${RUNNER_TEMP}/coverage.out"
+          coverage="$(
+            go tool cover -func "${RUNNER_TEMP}/coverage.out" |
+              awk '/^total:/ {gsub("%", "", $3); print $3}'
+          )"
+          awk -v coverage="${coverage}" \
+            'BEGIN { if (coverage + 0 < 75) exit 1 }'
+
+      - name: Compile Python sources
+        run: >-
+          python -m compileall -q
+          sdk/python
+          examples/incident_agent_pipeline
 
       - name: Run Python SDK tests
         working-directory: sdk/python
