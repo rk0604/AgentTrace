@@ -5,19 +5,17 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rk0604/AgentTrace/attrib"
 )
 
 func TestFindRootCauseStopsAtFirstFailureInDependencyOrder(t *testing.T) {
-	trace := attrib.Trace{
-		RunID: "run-failed",
-		Steps: []attrib.Step{
-			{StepID: "final", AgentName: "Final", DependsOn: []string{"middle"}},
-			{StepID: "middle", AgentName: "Middle", DependsOn: []string{"source"}},
-			{StepID: "source", AgentName: "Source"},
-		},
-	}
+	trace := validAttributionTrace("run-failed", []attrib.Step{
+		{StepID: "final", AgentName: "Final", DependsOn: []string{"middle"}},
+		{StepID: "middle", AgentName: "Middle", DependsOn: []string{"source"}},
+		{StepID: "source", AgentName: "Source"},
+	})
 	called := make([]string, 0)
 	checkers := map[string]attrib.StepChecker{
 		"source": checkerThatRecords(&called, true, ""),
@@ -50,13 +48,10 @@ func TestFindRootCauseStopsAtFirstFailureInDependencyOrder(t *testing.T) {
 }
 
 func TestFindRootCauseReturnsPassedWhenEveryStepPasses(t *testing.T) {
-	trace := attrib.Trace{
-		RunID: "run-passed",
-		Steps: []attrib.Step{
-			{StepID: "source"},
-			{StepID: "final", DependsOn: []string{"source"}},
-		},
-	}
+	trace := validAttributionTrace("run-passed", []attrib.Step{
+		{StepID: "source"},
+		{StepID: "final", DependsOn: []string{"source"}},
+	})
 	checkers := map[string]attrib.StepChecker{
 		"source": func(attrib.Step) (attrib.CheckResult, error) { return attrib.Pass(), nil },
 		"final":  func(attrib.Step) (attrib.CheckResult, error) { return attrib.Pass(), nil },
@@ -77,20 +72,17 @@ func TestFindRootCauseReturnsPassedWhenEveryStepPasses(t *testing.T) {
 }
 
 func TestFindRootCauseReturnsEvidenceAndDownstreamImpact(t *testing.T) {
-	trace := attrib.Trace{
-		RunID: "evidence-run",
-		Steps: []attrib.Step{
-			{
-				StepID: "source",
-				Input:  json.RawMessage(`{"document":"input"}`),
-				Output: json.RawMessage(`{"value":"wrong"}`),
-			},
-			{StepID: "left", DependsOn: []string{"source"}},
-			{StepID: "right", DependsOn: []string{"source"}},
-			{StepID: "merge", DependsOn: []string{"left", "right"}},
-			{StepID: "independent"},
+	trace := validAttributionTrace("evidence-run", []attrib.Step{
+		{
+			StepID: "source",
+			Input:  json.RawMessage(`{"document":"input"}`),
+			Output: json.RawMessage(`{"value":"wrong"}`),
 		},
-	}
+		{StepID: "left", DependsOn: []string{"source"}},
+		{StepID: "right", DependsOn: []string{"source"}},
+		{StepID: "merge", DependsOn: []string{"left", "right"}},
+		{StepID: "independent"},
+	})
 	expected := json.RawMessage(`{"value":"correct"}`)
 	checkers := map[string]attrib.StepChecker{
 		"source": func(attrib.Step) (attrib.CheckResult, error) {
@@ -144,7 +136,10 @@ func TestFindRootCauseReturnsEvidenceAndDownstreamImpact(t *testing.T) {
 }
 
 func TestFindRootCauseReturnsErrorForMissingChecker(t *testing.T) {
-	trace := attrib.Trace{Steps: []attrib.Step{{StepID: "source"}}}
+	trace := validAttributionTrace(
+		"missing-checker-run",
+		[]attrib.Step{{StepID: "source"}},
+	)
 
 	_, err := attrib.FindRootCause(trace, map[string]attrib.StepChecker{})
 	if err == nil {
@@ -156,12 +151,10 @@ func TestFindRootCauseReturnsErrorForMissingChecker(t *testing.T) {
 }
 
 func TestFindRootCauseValidatesAllCheckersBeforeEvaluation(t *testing.T) {
-	trace := attrib.Trace{
-		Steps: []attrib.Step{
-			{StepID: "source"},
-			{StepID: "final", DependsOn: []string{"source"}},
-		},
-	}
+	trace := validAttributionTrace("coverage-run", []attrib.Step{
+		{StepID: "source"},
+		{StepID: "final", DependsOn: []string{"source"}},
+	})
 	called := false
 	checkers := map[string]attrib.StepChecker{
 		"source": func(attrib.Step) (attrib.CheckResult, error) {
@@ -183,7 +176,10 @@ func TestFindRootCauseValidatesAllCheckersBeforeEvaluation(t *testing.T) {
 }
 
 func TestFindRootCauseReturnsCheckerErrorWithStepID(t *testing.T) {
-	trace := attrib.Trace{Steps: []attrib.Step{{StepID: "source"}}}
+	trace := validAttributionTrace(
+		"checker-error-run",
+		[]attrib.Step{{StepID: "source"}},
+	)
 	checkers := map[string]attrib.StepChecker{
 		"source": func(attrib.Step) (attrib.CheckResult, error) {
 			return attrib.CheckResult{}, errors.New("evaluator unavailable")
@@ -200,12 +196,10 @@ func TestFindRootCauseReturnsCheckerErrorWithStepID(t *testing.T) {
 }
 
 func TestValidateAcceptsValidGraphAndCheckerCoverage(t *testing.T) {
-	trace := attrib.Trace{
-		Steps: []attrib.Step{
-			{StepID: "source"},
-			{StepID: "final", DependsOn: []string{"source"}},
-		},
-	}
+	trace := validAttributionTrace("validate-run", []attrib.Step{
+		{StepID: "source"},
+		{StepID: "final", DependsOn: []string{"source"}},
+	})
 	checkers := map[string]attrib.StepChecker{
 		"source": func(attrib.Step) (attrib.CheckResult, error) { return attrib.Pass(), nil },
 		"final":  func(attrib.Step) (attrib.CheckResult, error) { return attrib.Pass(), nil },
@@ -217,11 +211,10 @@ func TestValidateAcceptsValidGraphAndCheckerCoverage(t *testing.T) {
 }
 
 func TestValidateRejectsInvalidDependencyGraph(t *testing.T) {
-	trace := attrib.Trace{
-		Steps: []attrib.Step{
-			{StepID: "source", DependsOn: []string{"missing"}},
-		},
-	}
+	trace := validAttributionTrace(
+		"invalid-graph-run",
+		[]attrib.Step{{StepID: "source", DependsOn: []string{"missing"}}},
+	)
 
 	err := attrib.Validate(trace, map[string]attrib.StepChecker{})
 	if err == nil {
@@ -233,12 +226,10 @@ func TestValidateRejectsInvalidDependencyGraph(t *testing.T) {
 }
 
 func TestValidateRejectsMissingCheckerWithoutEvaluation(t *testing.T) {
-	trace := attrib.Trace{
-		Steps: []attrib.Step{
-			{StepID: "source"},
-			{StepID: "final", DependsOn: []string{"source"}},
-		},
-	}
+	trace := validAttributionTrace("missing-coverage-run", []attrib.Step{
+		{StepID: "source"},
+		{StepID: "final", DependsOn: []string{"source"}},
+	})
 	called := false
 	checkers := map[string]attrib.StepChecker{
 		"source": func(attrib.Step) (attrib.CheckResult, error) {
@@ -280,5 +271,37 @@ func assertStrings(t *testing.T, got []string, want []string) {
 		if got[index] != want[index] {
 			t.Fatalf("expected %v, got %v", want, got)
 		}
+	}
+}
+
+func validAttributionTrace(runID string, steps []attrib.Step) attrib.Trace {
+	for index := range steps {
+		steps[index].RunID = runID
+		if steps[index].AgentName == "" {
+			steps[index].AgentName = steps[index].StepID
+		}
+		if len(steps[index].Input) == 0 {
+			steps[index].Input = json.RawMessage(`{}`)
+		}
+		if len(steps[index].Output) == 0 {
+			steps[index].Output = json.RawMessage(`{}`)
+		}
+		steps[index].Timestamp = time.Date(
+			2026,
+			7,
+			30,
+			12,
+			0,
+			index,
+			0,
+			time.UTC,
+		)
+		steps[index].Status = "ok"
+	}
+
+	return attrib.Trace{
+		Version: attrib.CurrentTraceVersion,
+		RunID:   runID,
+		Steps:   steps,
 	}
 }

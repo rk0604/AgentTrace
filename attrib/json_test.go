@@ -3,6 +3,7 @@ package attrib_test
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -170,28 +171,40 @@ func TestValidateTraceSchemaEnforcesResourceLimits(t *testing.T) {
 }
 
 func TestValidateTraceSchemaRejectsInvalidConfidence(t *testing.T) {
-	confidence := 1.1
-	trace := attrib.Trace{
-		Version: attrib.CurrentTraceVersion,
-		RunID:   "confidence-run",
-		Steps: []attrib.Step{
-			{
-				RunID:      "confidence-run",
-				StepID:     "source",
-				AgentName:  "Source",
-				Input:      json.RawMessage(`{}`),
-				Output:     json.RawMessage(`{}`),
-				Confidence: &confidence,
-				Timestamp:  time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC),
-				Status:     "ok",
-			},
-		},
+	tests := []struct {
+		name       string
+		confidence float64
+	}{
+		{name: "above range", confidence: 1.1},
+		{name: "below range", confidence: -0.1},
+		{name: "not a number", confidence: math.NaN()},
+		{name: "positive infinity", confidence: math.Inf(1)},
 	}
 
-	err := attrib.ValidateTraceSchema(trace)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			trace := attrib.Trace{
+				Version: attrib.CurrentTraceVersion,
+				RunID:   "confidence-run",
+				Steps: []attrib.Step{
+					{
+						RunID:      "confidence-run",
+						StepID:     "source",
+						AgentName:  "Source",
+						Input:      json.RawMessage(`{}`),
+						Output:     json.RawMessage(`{}`),
+						Confidence: &test.confidence,
+						Timestamp:  time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC),
+						Status:     "ok",
+					},
+				},
+			}
 
-	if err == nil || !strings.Contains(err.Error(), "confidence outside") {
-		t.Fatalf("expected confidence error, got %v", err)
+			err := attrib.ValidateTraceSchema(trace)
+			if err == nil || !strings.Contains(err.Error(), "confidence outside") {
+				t.Fatalf("expected confidence error, got %v", err)
+			}
+		})
 	}
 }
 

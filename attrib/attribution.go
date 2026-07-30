@@ -59,7 +59,7 @@ type AttributionResult struct {
 // error
 // Non nil when graph, checker coverage, or evaluation fails.
 func FindRootCause(trace Trace, checkers map[string]StepChecker) (AttributionResult, error) {
-	orderedSteps, err := TopologicalSort(trace)
+	orderedSteps, err := validateAndOrderTrace(trace)
 	if err != nil {
 		return AttributionResult{}, err
 	}
@@ -117,7 +117,7 @@ func FindRootCause(trace Trace, checkers map[string]StepChecker) (AttributionRes
 // error
 // Non nil when the graph is invalid or a step has no checker.
 func Validate(trace Trace, checkers map[string]StepChecker) error {
-	orderedSteps, err := TopologicalSort(trace)
+	orderedSteps, err := validateAndOrderTrace(trace)
 	if err != nil {
 		return err
 	}

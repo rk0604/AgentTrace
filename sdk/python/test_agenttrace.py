@@ -4,13 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from agenttrace import TraceRecorder, gather_recorded
+from agenttrace import (
+    MAX_TRACE_STEPS,
+    TraceRecorder,
+    gather_recorded,
+    validate_trace,
+)
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 class SequenceClock:
@@ -93,6 +102,52 @@ class TraceRecorderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "depends on unknown step"):
             recorder.trace()
 
+    def test_rejects_empty_trace(self) -> None:
+        """Confirm that a completed trace must contain one step."""
+
+        recorder = TraceRecorder("empty-run", clock=SequenceClock())
+
+        with self.assertRaisesRegex(ValueError, "trace has no steps"):
+            recorder.trace()
+
+    def test_rejects_repeated_dependency(self) -> None:
+        """Confirm that one dependency cannot be declared twice."""
+
+        recorder = TraceRecorder("repeated-run", clock=SequenceClock())
+        recorder.start_step("source", "Source", {})
+        recorder.finish_step("source", {})
+
+        with self.assertRaisesRegex(ValueError, "dependency ID is repeated"):
+            recorder.start_step(
+                "consumer",
+                "Consumer",
+                {},
+                depends_on=["source", "source"],
+            )
+
+    def test_rejects_nonfinite_json_and_confidence(self) -> None:
+        """Confirm that recorder output remains strict JSON."""
+
+        recorder = TraceRecorder("nonfinite-run", clock=SequenceClock())
+        with self.assertRaisesRegex(ValueError, "Out of range float"):
+            recorder.start_step("source", "Source", {"value": math.nan})
+
+        recorder.start_step("source", "Source", {})
+        with self.assertRaisesRegex(ValueError, "confidence must be between"):
+            recorder.finish_step("source", {}, confidence=math.nan)
+
+    def test_rejects_trace_over_step_limit(self) -> None:
+        """Confirm that Python enforces the shared graph size limit."""
+
+        trace = {
+            "version": 1,
+            "run_id": "oversized-run",
+            "steps": [{}] * (MAX_TRACE_STEPS + 1),
+        }
+
+        with self.assertRaisesRegex(ValueError, "exceeds limit"):
+            validate_trace(trace)
+
     def test_writes_utf8_json(self) -> None:
         """Confirm that a trace can be read from a UTF 8 JSON file."""
 
@@ -108,6 +163,30 @@ class TraceRecorderTests(unittest.TestCase):
 
         self.assertEqual(decoded["steps"][0]["output"]["text"], "résumé")
         self.assertNotIn(b"\r\n", raw)
+
+
+class TraceContractTests(unittest.TestCase):
+    """Runs shared language neutral trace contract fixtures."""
+
+    def test_shared_trace_contract_cases(self) -> None:
+        """Confirm that Python agrees with the canonical fixture outcomes."""
+
+        path = (
+            REPOSITORY_ROOT
+            / "testdata"
+            / "trace-contract"
+            / "cases.json"
+        )
+        cases = json.loads(path.read_text(encoding="utf-8"))
+
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                if case["valid"]:
+                    validate_trace(case["trace"])
+                    continue
+
+                with self.assertRaises(ValueError):
+                    validate_trace(case["trace"])
 
 
 class AsyncTraceRecorderTests(unittest.IsolatedAsyncioTestCase):

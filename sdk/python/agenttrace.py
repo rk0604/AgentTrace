@@ -6,7 +6,10 @@ import asyncio
 import copy
 import inspect
 import json
+import math
+import re
 import threading
+from collections import deque
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +17,28 @@ from typing import Any
 
 
 TRACE_VERSION = 1
+MAX_TRACE_STEPS = 10_000
+MAX_STEP_DEPENDENCIES = 1_000
+
+_TRACE_FIELDS = frozenset({"version", "run_id", "steps"})
+_STEP_FIELDS = frozenset(
+    {
+        "run_id",
+        "step_id",
+        "agent_name",
+        "depends_on",
+        "input",
+        "output",
+        "model_used",
+        "confidence",
+        "timestamp",
+        "status",
+    }
+)
+_RFC3339_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+    r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
 
 
 class TraceRecorder:
@@ -86,12 +111,28 @@ class TraceRecorder:
 
         encoded_input = _json_clone(input_data, "input")
         dependencies = list(depends_on)
-        if any(not dependency or not dependency.strip() for dependency in dependencies):
+        if any(
+            not isinstance(dependency, str)
+            or not dependency.strip()
+            for dependency in dependencies
+        ):
             raise ValueError(f"start step {step_id!r}: dependency ID is empty")
+        if len(dependencies) > MAX_STEP_DEPENDENCIES:
+            raise ValueError(
+                f"start step {step_id!r}: dependency count exceeds "
+                f"limit {MAX_STEP_DEPENDENCIES}"
+            )
+        if len(dependencies) != len(set(dependencies)):
+            raise ValueError(f"start step {step_id!r}: dependency ID is repeated")
 
         with self._lock:
             if step_id in self._steps:
                 raise ValueError(f"start step {step_id!r}: duplicate step ID")
+            if len(self._steps) >= MAX_TRACE_STEPS:
+                raise ValueError(
+                    f"start step {step_id!r}: trace step count exceeds "
+                    f"limit {MAX_TRACE_STEPS}"
+                )
 
             self._steps[step_id] = {
                 "run_id": self._run_id,
@@ -290,12 +331,13 @@ class TraceRecorder:
                 for step_id in self._step_order
             ]
 
-        _validate_graph(steps)
-        return {
+        trace = {
             "version": TRACE_VERSION,
             "run_id": self._run_id,
             "steps": steps,
         }
+        validate_trace(trace)
+        return trace
 
     def write_trace(self, path: str | Path) -> None:
         """Write the completed trace to a JSON file.
@@ -345,7 +387,12 @@ class TraceRecorder:
         """
 
         encoded_output = _json_clone(output, "output")
-        if confidence is not None and not 0 <= confidence <= 1:
+        if confidence is not None and (
+            isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not math.isfinite(confidence)
+            or not 0 <= confidence <= 1
+        ):
             raise ValueError(
                 f"complete step {step_id!r}: confidence must be between zero and one"
             )
@@ -380,7 +427,13 @@ def _json_clone(value: Any, field_name: str) -> Any:
     """
 
     try:
-        return json.loads(json.dumps(value, ensure_ascii=False))
+        return json.loads(
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        )
     except (TypeError, ValueError) as error:
         raise ValueError(f"encode {field_name} JSON: {error}") from error
 
@@ -403,39 +456,88 @@ def _format_timestamp(value: datetime) -> str:
     return value.isoformat().replace("+00:00", "Z")
 
 
-def _validate_graph(steps: list[dict[str, Any]]) -> None:
-    """Validate dependencies and detect cycles.
+def validate_trace(trace: dict[str, Any]) -> None:
+    """Validate one complete AgentTrace document.
 
     Input
-    steps list of dict
-    Completed step documents.
+    trace dict of str to Any
+    Candidate language neutral trace.
 
     Output
     None
-    The function returns after a valid graph is confirmed.
+    The function returns after the schema and graph are confirmed.
     """
 
-    step_ids = {step["step_id"] for step in steps}
+    if not isinstance(trace, dict):
+        raise ValueError("trace must be an object")
+
+    unknown_trace_fields = sorted(set(trace).difference(_TRACE_FIELDS))
+    if unknown_trace_fields:
+        raise ValueError(
+            f"trace has unknown field {unknown_trace_fields[0]!r}"
+        )
+
+    version = trace.get("version", TRACE_VERSION)
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or version not in {0, TRACE_VERSION}
+    ):
+        raise ValueError(f"unsupported trace version {version!r}")
+
+    run_id = trace.get("run_id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        raise ValueError("trace has an empty run_id")
+
+    steps = trace.get("steps")
+    if not isinstance(steps, list):
+        raise ValueError("trace steps must be an array")
+    if not steps:
+        raise ValueError("trace has no steps")
+    if len(steps) > MAX_TRACE_STEPS:
+        raise ValueError(
+            f"trace has {len(steps)} steps which exceeds limit "
+            f"{MAX_TRACE_STEPS}"
+        )
+
+    _json_clone(trace, "trace")
+
+    step_ids: set[str] = set()
+    for position, step in enumerate(steps):
+        _validate_step(step, position, run_id)
+        step_id = step["step_id"]
+        if step_id in step_ids:
+            raise ValueError(f"duplicate step_id {step_id!r}")
+        step_ids.add(step_id)
+
     indegree = {step_id: 0 for step_id in step_ids}
     dependents: dict[str, list[str]] = {step_id: [] for step_id in step_ids}
 
     for step in steps:
-        for dependency in step["depends_on"]:
+        dependencies = step.get("depends_on", [])
+        seen_dependencies: set[str] = set()
+        for dependency in dependencies:
             if dependency not in step_ids:
                 raise ValueError(
                     f"step {step['step_id']!r} depends on unknown step {dependency!r}"
                 )
+            if dependency in seen_dependencies:
+                raise ValueError(
+                    f"step {step['step_id']!r} repeats dependency "
+                    f"{dependency!r}"
+                )
+            seen_dependencies.add(dependency)
             indegree[step["step_id"]] += 1
             dependents[dependency].append(step["step_id"])
 
-    ready = [
+    ready = deque(
         step["step_id"]
         for step in steps
         if indegree[step["step_id"]] == 0
-    ]
+    )
     checked = 0
     while ready:
-        step_id = ready.pop(0)
+        step_id = ready.popleft()
         checked += 1
         for dependent in dependents[step_id]:
             indegree[dependent] -= 1
@@ -444,6 +546,103 @@ def _validate_graph(steps: list[dict[str, Any]]) -> None:
 
     if checked != len(steps):
         raise ValueError("trace contains a dependency cycle")
+
+
+def _validate_step(
+    step: Any,
+    position: int,
+    run_id: str,
+) -> None:
+    """Validate one trace step.
+
+    Input
+    step Any
+    Candidate step object.
+
+    position int
+    Step position used in errors.
+
+    run_id str
+    Run identifier required on the step.
+
+    Output
+    None
+    The function returns after the step fields are confirmed.
+    """
+
+    if not isinstance(step, dict):
+        raise ValueError(f"step at position {position} must be an object")
+
+    unknown_step_fields = sorted(set(step).difference(_STEP_FIELDS))
+    if unknown_step_fields:
+        raise ValueError(
+            f"step at position {position} has unknown field "
+            f"{unknown_step_fields[0]!r}"
+        )
+
+    if step.get("run_id") != run_id:
+        raise ValueError(
+            f"step at position {position} has run_id "
+            f"{step.get('run_id')!r} instead of {run_id!r}"
+        )
+
+    step_id = step.get("step_id")
+    if not isinstance(step_id, str) or not step_id.strip():
+        raise ValueError(f"step at position {position} has an empty step_id")
+
+    agent_name = step.get("agent_name")
+    if not isinstance(agent_name, str) or not agent_name.strip():
+        raise ValueError(f"step {step_id!r} has an empty agent_name")
+
+    dependencies = step.get("depends_on", [])
+    if not isinstance(dependencies, list) or any(
+        not isinstance(dependency, str)
+        for dependency in dependencies
+    ):
+        raise ValueError(f"step {step_id!r} dependencies must be strings")
+    if len(dependencies) > MAX_STEP_DEPENDENCIES:
+        raise ValueError(
+            f"step {step_id!r} has {len(dependencies)} dependencies "
+            f"which exceeds limit {MAX_STEP_DEPENDENCIES}"
+        )
+
+    if "input" not in step:
+        raise ValueError(f"step {step_id!r} has invalid input JSON")
+    if "output" not in step:
+        raise ValueError(f"step {step_id!r} has invalid output JSON")
+
+    timestamp = step.get("timestamp")
+    if not isinstance(timestamp, str) or not _RFC3339_PATTERN.fullmatch(timestamp):
+        raise ValueError(f"step {step_id!r} has an invalid timestamp")
+    try:
+        parsed_timestamp = datetime.fromisoformat(
+            timestamp.replace("Z", "+00:00")
+        )
+    except ValueError as error:
+        raise ValueError(
+            f"step {step_id!r} has an invalid timestamp"
+        ) from error
+    if (
+        parsed_timestamp.tzinfo is None
+        or parsed_timestamp
+        == datetime.min.replace(tzinfo=timezone.utc)
+    ):
+        raise ValueError(f"step {step_id!r} has an empty timestamp")
+
+    status = step.get("status")
+    if not isinstance(status, str) or not status.strip():
+        raise ValueError(f"step {step_id!r} has an empty status")
+
+    confidence = step.get("confidence")
+    if confidence is not None and (
+        isinstance(confidence, bool)
+        or not isinstance(confidence, (int, float))
+        or not math.isfinite(confidence)
+        or not 0 <= confidence <= 1
+    ):
+        raise ValueError(
+            f"step {step_id!r} has confidence outside zero through one"
+        )
 
 
 async def gather_recorded(*awaitables: Awaitable[Any]) -> list[Any]:

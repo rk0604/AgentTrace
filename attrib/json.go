@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 )
 
@@ -60,31 +61,48 @@ func DecodeTrace(reader io.Reader) (Trace, error) {
 // error
 // Non nil when required fields, versions, run IDs, or payloads are invalid.
 func ValidateTraceSchema(trace Trace) error {
+	_, err := validateAndOrderTrace(trace)
+	return err
+}
+
+// validateAndOrderTrace validates the complete trace and returns dependency order.
+//
+// Input
+// trace Trace
+// Trace containing generic run, step, payload, and dependency data.
+//
+// Output
+// []Step
+// Validated steps in dependency order.
+//
+// error
+// Non nil when the trace fields or graph are invalid.
+func validateAndOrderTrace(trace Trace) ([]Step, error) {
 	if trace.Version != 0 && trace.Version != CurrentTraceVersion {
-		return fmt.Errorf("unsupported trace version %d", trace.Version)
+		return nil, fmt.Errorf("unsupported trace version %d", trace.Version)
 	}
 	if strings.TrimSpace(trace.RunID) == "" {
-		return fmt.Errorf("trace has an empty run_id")
+		return nil, fmt.Errorf("trace has an empty run_id")
 	}
 	if len(trace.Steps) == 0 {
-		return fmt.Errorf("trace has no steps")
+		return nil, fmt.Errorf("trace has no steps")
 	}
 	if len(trace.Steps) > MaxTraceSteps {
-		return fmt.Errorf("trace has %d steps which exceeds limit %d", len(trace.Steps), MaxTraceSteps)
+		return nil, fmt.Errorf("trace has %d steps which exceeds limit %d", len(trace.Steps), MaxTraceSteps)
 	}
 
 	for position, step := range trace.Steps {
 		if step.RunID != trace.RunID {
-			return fmt.Errorf("step at position %d has run_id %q instead of %q", position, step.RunID, trace.RunID)
+			return nil, fmt.Errorf("step at position %d has run_id %q instead of %q", position, step.RunID, trace.RunID)
 		}
 		if strings.TrimSpace(step.StepID) == "" {
-			return fmt.Errorf("step at position %d has an empty step_id", position)
+			return nil, fmt.Errorf("step at position %d has an empty step_id", position)
 		}
 		if strings.TrimSpace(step.AgentName) == "" {
-			return fmt.Errorf("step %q has an empty agent_name", step.StepID)
+			return nil, fmt.Errorf("step %q has an empty agent_name", step.StepID)
 		}
 		if len(step.DependsOn) > MaxStepDependencies {
-			return fmt.Errorf(
+			return nil, fmt.Errorf(
 				"step %q has %d dependencies which exceeds limit %d",
 				step.StepID,
 				len(step.DependsOn),
@@ -92,27 +110,32 @@ func ValidateTraceSchema(trace Trace) error {
 			)
 		}
 		if len(step.Input) == 0 || !json.Valid(step.Input) {
-			return fmt.Errorf("step %q has invalid input JSON", step.StepID)
+			return nil, fmt.Errorf("step %q has invalid input JSON", step.StepID)
 		}
 		if len(step.Output) == 0 || !json.Valid(step.Output) {
-			return fmt.Errorf("step %q has invalid output JSON", step.StepID)
+			return nil, fmt.Errorf("step %q has invalid output JSON", step.StepID)
 		}
 		if step.Timestamp.IsZero() {
-			return fmt.Errorf("step %q has an empty timestamp", step.StepID)
+			return nil, fmt.Errorf("step %q has an empty timestamp", step.StepID)
 		}
 		if strings.TrimSpace(step.Status) == "" {
-			return fmt.Errorf("step %q has an empty status", step.StepID)
+			return nil, fmt.Errorf("step %q has an empty status", step.StepID)
 		}
-		if step.Confidence != nil && (*step.Confidence < 0 || *step.Confidence > 1) {
-			return fmt.Errorf("step %q has confidence outside zero through one", step.StepID)
+		if step.Confidence != nil &&
+			(math.IsNaN(*step.Confidence) ||
+				math.IsInf(*step.Confidence, 0) ||
+				*step.Confidence < 0 ||
+				*step.Confidence > 1) {
+			return nil, fmt.Errorf("step %q has confidence outside zero through one", step.StepID)
 		}
 	}
 
-	if _, err := TopologicalSort(trace); err != nil {
-		return err
+	orderedSteps, err := TopologicalSort(trace)
+	if err != nil {
+		return nil, err
 	}
 
-	return nil
+	return orderedSteps, nil
 }
 
 // EncodeTrace writes one versioned JSON trace.

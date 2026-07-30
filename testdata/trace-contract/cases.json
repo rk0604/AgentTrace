@@ -1,0 +1,272 @@
+[
+  {
+    "name": "valid linear trace",
+    "valid": true,
+    "trace": {
+      "version": 1,
+      "run_id": "contract-linear",
+      "steps": [
+        {
+          "run_id": "contract-linear",
+          "step_id": "source",
+          "agent_name": "Source",
+          "depends_on": [],
+          "input": {
+            "value": 1
+          },
+          "output": {
+            "value": 2
+          },
+          "model_used": "contract-test",
+          "confidence": 0.8,
+          "timestamp": "2026-07-30T12:00:00Z",
+          "status": "ok"
+        },
+        {
+          "run_id": "contract-linear",
+          "step_id": "consumer",
+          "agent_name": "Consumer",
+          "depends_on": [
+            "source"
+          ],
+          "input": {
+            "value": 2
+          },
+          "output": {
+            "answer": "done"
+          },
+          "model_used": "contract-test",
+          "timestamp": "2026-07-30T12:00:01Z",
+          "status": "ok"
+        }
+      ]
+    }
+  },
+  {
+    "name": "valid legacy optional fields",
+    "valid": true,
+    "trace": {
+      "run_id": "contract-legacy",
+      "steps": [
+        {
+          "run_id": "contract-legacy",
+          "step_id": "source",
+          "agent_name": "Source",
+          "input": null,
+          "output": null,
+          "timestamp": "2026-07-30T12:00:00+00:00",
+          "status": "ok"
+        }
+      ]
+    }
+  },
+  {
+    "name": "unknown trace field",
+    "valid": false,
+    "trace": {
+      "version": 1,
+      "run_id": "contract-unknown",
+      "created_at": "2026-07-30T12:00:00Z",
+      "steps": []
+    }
+  },
+  {
+    "name": "empty trace",
+    "valid": false,
+    "trace": {
+      "version": 1,
+      "run_id": "contract-empty",
+      "steps": []
+    }
+  },
+  {
+    "name": "mismatched run identifier",
+    "valid": false,
+    "trace": {
+      "version": 1,
+      "run_id": "contract-run",
+      "steps": [
+        {
+          "run_id": "different-run",
+          "step_id": "source",
+          "agent_name": "Source",
+          "depends_on": [],
+          "input": {},
+          "output": {},
+          "model_used": "contract-test",
+          "timestamp": "2026-07-30T12:00:00Z",
+          "status": "ok"
+        }
+      ]
+    }
+  },
+  {
+    "name": "duplicate step identifier",
+    "valid": false,
+    "trace": {
+      "version": 1,
+      "run_id": "contract-duplicate",
+      "steps": [
+        {
+          "run_id": "contract-duplicate",
+          "step_id": "same",
+          "agent_name": "First",
+          "depends_on": [],
+          "input": {},
+          "output": {},
+          "model_used": "contract-test",
+          "timestamp": "2026-07-30T12:00:00Z",
+          "status": "ok"
+        },
+        {
+          "run_id": "contract-duplicate",
+          "step_id": "same",
+          "agent_name": "Second",
+          "depends_on": [],
+          "input": {},
+          "output": {},
+          "model_used": "contract-test",
+          "timestamp": "2026-07-30T12:00:01Z",
+          "status": "ok"
+        }
+      ]
+    }
+  },
+  {
+    "name": "unknown dependency",
+    "valid": false,
+    "trace": {
+      "version": 1,
+      "run_id": "contract-unknown-dependency",
+      "steps": [
+        {
+          "run_id": "contract-unknown-dependency",
+          "step_id": "consumer",
+          "agent_name": "Consumer",
+          "depends_on": [
+            "missing"
+          ],
+          "input": {},
+          "output": {},
+          "model_used": "contract-test",
+          "timestamp": "2026-07-30T12:00:00Z",
+          "status": "ok"
+        }
+      ]
+    }
+  },
+  {
+    "name": "repeated dependency",
+    "valid": false,
+    "trace": {
+      "version": 1,
+      "run_id": "contract-repeated-dependency",
+      "steps": [
+        {
+          "run_id": "contract-repeated-dependency",
+          "step_id": "source",
+          "agent_name": "Source",
+          "depends_on": [],
+          "input": {},
+          "output": {},
+          "model_used": "contract-test",
+          "timestamp": "2026-07-30T12:00:00Z",
+          "status": "ok"
+        },
+        {
+          "run_id": "contract-repeated-dependency",
+          "step_id": "consumer",
+          "agent_name": "Consumer",
+          "depends_on": [
+            "source",
+            "source"
+          ],
+          "input": {},
+          "output": {},
+          "model_used": "contract-test",
+          "timestamp": "2026-07-30T12:00:01Z",
+          "status": "ok"
+        }
+      ]
+    }
+  },
+  {
+    "name": "dependency cycle",
+    "valid": false,
+    "trace": {
+      "version": 1,
+      "run_id": "contract-cycle",
+      "steps": [
+        {
+          "run_id": "contract-cycle",
+          "step_id": "first",
+          "agent_name": "First",
+          "depends_on": [
+            "second"
+          ],
+          "input": {},
+          "output": {},
+          "model_used": "contract-test",
+          "timestamp": "2026-07-30T12:00:00Z",
+          "status": "ok"
+        },
+        {
+          "run_id": "contract-cycle",
+          "step_id": "second",
+          "agent_name": "Second",
+          "depends_on": [
+            "first"
+          ],
+          "input": {},
+          "output": {},
+          "model_used": "contract-test",
+          "timestamp": "2026-07-30T12:00:01Z",
+          "status": "ok"
+        }
+      ]
+    }
+  },
+  {
+    "name": "confidence outside range",
+    "valid": false,
+    "trace": {
+      "version": 1,
+      "run_id": "contract-confidence",
+      "steps": [
+        {
+          "run_id": "contract-confidence",
+          "step_id": "source",
+          "agent_name": "Source",
+          "depends_on": [],
+          "input": {},
+          "output": {},
+          "model_used": "contract-test",
+          "confidence": 1.1,
+          "timestamp": "2026-07-30T12:00:00Z",
+          "status": "ok"
+        }
+      ]
+    }
+  },
+  {
+    "name": "invalid timestamp",
+    "valid": false,
+    "trace": {
+      "version": 1,
+      "run_id": "contract-timestamp",
+      "steps": [
+        {
+          "run_id": "contract-timestamp",
+          "step_id": "source",
+          "agent_name": "Source",
+          "depends_on": [],
+          "input": {},
+          "output": {},
+          "model_used": "contract-test",
+          "timestamp": "not-a-timestamp",
+          "status": "ok"
+        }
+      ]
+    }
+  }
+]

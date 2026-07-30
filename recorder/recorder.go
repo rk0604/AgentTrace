@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -247,7 +248,11 @@ func (recorder *Recorder) completeStep(stepID string, output any, confidence *fl
 	if err != nil {
 		return fmt.Errorf("complete step %q: %w", stepID, err)
 	}
-	if confidence != nil && (*confidence < 0 || *confidence > 1) {
+	if confidence != nil &&
+		(math.IsNaN(*confidence) ||
+			math.IsInf(*confidence, 0) ||
+			*confidence < 0 ||
+			*confidence > 1) {
 		return fmt.Errorf("complete step %q: confidence must be between zero and one", stepID)
 	}
 

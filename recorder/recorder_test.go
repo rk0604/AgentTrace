@@ -3,6 +3,7 @@ package recorder_test
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -131,6 +132,31 @@ func TestRecorderRejectsInvalidLifecycle(t *testing.T) {
 		t.Fatalf("FailStep returned error: %v", err)
 	}
 	assertErrorContains(t, run.FinishStep("source", nil, nil), "already finished")
+}
+
+func TestRecorderRejectsNonfiniteConfidence(t *testing.T) {
+	run, err := recorder.StartRun("confidence-run", recorder.Options{
+		Clock: func() time.Time {
+			return time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+		},
+	})
+	if err != nil {
+		t.Fatalf("StartRun returned error: %v", err)
+	}
+	if err := run.StartStep(recorder.StepStart{
+		StepID:    "source",
+		AgentName: "Source",
+		Input:     map[string]any{},
+	}); err != nil {
+		t.Fatalf("StartStep returned error: %v", err)
+	}
+
+	confidence := math.NaN()
+	assertErrorContains(
+		t,
+		run.FinishStep("source", map[string]any{}, &confidence),
+		"confidence must be between",
+	)
 }
 
 func TestRecorderWritesTraceAcceptedByDecoder(t *testing.T) {
