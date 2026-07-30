@@ -58,12 +58,19 @@ must not gain fields such as revenue, claim amount, quarter, or incident cause.
 ## Validation rules
 
 - Trace and step run IDs must be present and match.
+- A trace must contain at least one step.
 - Step IDs must be unique.
 - Dependencies must exist and cannot be repeated.
 - The dependency graph must be acyclic.
-- Input and output values must contain valid JSON.
-- Confidence must be between zero and one.
+- Input and output values must contain strict finite JSON.
+- Confidence must be finite and between zero and one.
+- Timestamps must be RFC 3339 values with a timezone.
+- Unknown trace and step fields are rejected.
 - A trace can contain at most 10,000 steps.
 - One step can declare at most 1,000 dependencies.
 
 The CLI accepts trace files up to 16 MiB.
+
+Trace payloads can contain prompts, source documents, customer data, and model
+outputs. Producers must redact sensitive values before recording or exporting a
+trace.

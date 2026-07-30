@@ -4,9 +4,10 @@
 
 AgentTrace is a post run root cause attribution tool for AI agent pipelines. It
 reads a completed pipeline trace, walks its dependency graph in topological
-order, and evaluates developer supplied correctness rules. When a rule fails,
-AgentTrace identifies the earliest step that introduced bad data and reports how
-that data propagated downstream.
+order, and evaluates developer supplied correctness rules. When rules fail,
+AgentTrace identifies the earliest independent steps that introduced bad data,
+separates later secondary divergences, and reports possible downstream
+propagation.
 
 Each step is judged against the input it actually received. A downstream agent
 that correctly transforms incorrect upstream data is not blamed for the original
@@ -20,11 +21,12 @@ AgentTrace provides:
 * Concurrency safe trace recorders for Go and Python
 * Configurable CEL correctness rules and external expected data
 * Trace, graph, checker, and coverage validation
-* First divergence attribution with structured evidence
-* Human readable reports, an ASCII DAG, and JSON output
+* Target aware attribution with multiple root and secondary divergences
+* Privacy safe reports, a bounded ASCII DAG, and versioned JSON output
 
-AgentTrace does not orchestrate agents, call model providers, store run history,
-manage users, or provide a dashboard.
+The AgentTrace core and CLI do not orchestrate agents, call model providers,
+store run history, manage users, or provide a dashboard. The repository includes
+an optional live pipeline solely as an integration example.
 
 LangGraph builds and runs workflows. Langfuse observes LLM applications over
 time. AgentTrace analyzes one completed run and asks which step first introduced
@@ -45,16 +47,18 @@ AgentTrace validate
 AgentTrace run
       |
       v
-Root cause + evidence + affected steps + propagation edges
+Root causes + divergences + downstream candidates + propagation edges
 ```
 
 AgentTrace:
 
 1. Validates the trace schema and dependency graph.
 2. Compiles the checker configuration.
-3. Orders steps by `depends_on`, not recorded call order.
-4. Evaluates each step until the first checker fails.
-5. Reports that step and its downstream impact.
+3. Resolves explicit targets or the graph's single output sink.
+4. Orders the selected ancestry by `depends_on`, not recorded call order.
+5. Evaluates every relevant step against its actual input.
+6. Reports independent root causes, secondary divergences, and possible
+   downstream propagation.
 
 AgentTrace does not infer correctness on its own. The developer supplies the
 checker rules and any ground truth those rules require.
@@ -63,12 +67,12 @@ checker rules and any ground truth those rules require.
 
 * Go 1.26.3 or newer
 * Git
-* Python 3.10 or newer only for the optional Python recorder
+* Python 3.10 or newer for the optional Python recorder and incident pipeline
 
-The demos are deterministic and require no model credentials or API keys.
-The real incident pipeline also has an offline replay mode. Live mode requires
-an OpenAI API key, an explicitly selected model, and the optional dependency
-listed by that integration.
+The Go demos are deterministic and require no model credentials or API keys.
+The real incident pipeline has an offline replay mode that requires its
+`requirements.txt` dependency. Live mode also requires an OpenAI API key, an
+explicitly selected model, and `requirements-live.txt`.
 
 ## Setup
 
@@ -77,6 +81,12 @@ git clone https://github.com/rk0604/AgentTrace.git
 cd AgentTrace
 go mod download
 go test ./...
+```
+
+Install the optional real incident pipeline dependency:
+
+```powershell
+python -m pip install -r ./examples/incident_agent_pipeline/requirements.txt
 ```
 
 Run from source:
@@ -132,6 +142,12 @@ analyzes checkout alerts, logs, metrics, deployments, and runbook guidance to
 produce an evidence-backed diagnosis and remediation plan. Analyzer branches run
 concurrently, and no step can execute production changes.
 
+Install its standards compliant JSON Schema validator once:
+
+```powershell
+python -m pip install -r ./examples/incident_agent_pipeline/requirements.txt
+```
+
 Run the healthy pipeline without credentials:
 
 ```powershell
@@ -152,7 +168,8 @@ go run ./cmd/agenttrace run --input ./incident-agent-trace.json --checkers ./exa
 ```
 
 The final summary follows the bad metric finding and reports an application
-error. AgentTrace still attributes the first divergence to `metrics_analyzer`.
+error. AgentTrace still attributes the earliest divergence on that branch to
+`metrics_analyzer`.
 
 For live model calls, installation, environment variables, architecture, and
 failure modes, see
@@ -301,18 +318,30 @@ Return only JSON:
 go run ./cmd/agenttrace run --input ./trace.json --checkers ./checkers.json --context ./context.json --json
 ```
 
-Write the complete JSON result while retaining the human report:
+Write the privacy safe JSON result while retaining the human report:
 
 ```powershell
 go run ./cmd/agenttrace run --input ./trace.json --checkers ./checkers.json --context ./context.json --output ./attribution-result.json
 ```
 
-`--json` and `--output` cannot be combined.
+`--json` and `--output` cannot be combined. Raw step input, output, and expected
+context are omitted by default. Include them only in an approved environment:
 
-A failed result contains the root cause step and agent, failure reason, failed
-expression, actual input and output, expected context, checked steps, affected
-steps, and propagation edges. A healthy result has status `passed` and no root
-cause.
+```powershell
+go run ./cmd/agenttrace run --input ./trace.json --checkers ./checkers.json --context ./context.json --json --include-evidence
+```
+
+A failed version 2 result contains targets, independent root causes, all
+divergences, checked steps, downstream candidates, and possible propagation
+edges. `root_cause`, `affected_step_ids`, and `cause_edges` remain compatibility
+aliases. A healthy result has status `passed` and no root cause.
+
+When a graph has multiple output sinks, repeat `--target` to select the outputs
+whose ancestry should be analyzed:
+
+```powershell
+go run ./cmd/agenttrace run --input ./trace.json --checkers ./checkers.json --target report --target alert
+```
 
 By default, the process exit code reports whether analysis completed, so a valid
 result with status `failed` exits with code `0`. Add `--fail-on-attribution` to
@@ -321,6 +350,9 @@ return code `1` after writing a failed result:
 ```powershell
 go run ./cmd/agenttrace run --input ./trace.json --checkers ./checkers.json --context ./context.json --json --fail-on-attribution
 ```
+
+See [docs/result-format.md](docs/result-format.md) for the complete result
+contract and classification rules.
 
 ## Go Recorder
 
@@ -428,7 +460,8 @@ go run ./cmd/agenttrace demo document --failure reference
 go run ./cmd/agenttrace demo document --failure none
 ```
 
-All demos support human output, `--json`, or `--output`.
+All demos support human output, `--json`, `--output`, and
+`--include-evidence`.
 The separate real incident pipeline is documented under
 `examples/incident_agent_pipeline`.
 
@@ -444,6 +477,12 @@ The separate real incident pipeline is documented under
 
 Each CEL expression has a cost limit and a 250 millisecond default timeout.
 Topological sorting is deterministic and uses a heap backed ready queue.
+Boxed graph rendering is bounded. Large, deep, wide, or edge dense graphs use a
+compact node and edge view with explicit omission counts.
+
+Result and trace files created by the CLI use owner read and write permissions
+on platforms that support Unix permission bits. Treat traces as sensitive even
+when output evidence is omitted from attribution results.
 
 Process exit codes:
 
@@ -502,9 +541,11 @@ Run one focused attribution test:
 go test ./documentdemo -run TestDocumentConfigurationAttributesFailureModes -v
 ```
 
-GitHub Actions checks formatting, runs Go tests with race detection, runs both
-Python suites, regenerates and compares all incident replay traces, validates a
-generated incident trace, and verifies the attribution failure exit gate.
+GitHub Actions verifies Go modules and Python dependencies, checks formatting,
+runs race detection and static analysis, enforces a 75 percent Go coverage
+floor, compiles Python, runs both Python suites, regenerates all incident replay
+traces, validates a generated trace, and verifies the attribution failure exit
+gate.
 
 ## Project Structure
 
@@ -518,7 +559,7 @@ generated incident trace, and verifies the attribution failure exit gate.
 | `incidentdemo` | Thirteen step incident investigation pipeline |
 | `toypipeline` | Four step introductory pipeline |
 | `integration` | Cross language integration tests |
-| `cmd/agenttrace` | CLI and ASCII DAG renderer |
+| `cmd/agenttrace` | CLI commands, file boundaries, reports, and bounded DAG renderer |
 | `examples/incident_agent_pipeline` | Live and replay 13-step Python pipeline |
 | `examples` | Traces, checkers, contexts, and Python examples |
 | `docs` | Detailed trace and checker contracts |
@@ -528,3 +569,6 @@ generated incident trace, and verifies the attribution failure exit gate.
 Treat `main` as the stable baseline. Run relevant tests before merging and keep
 changes focused. Multi agent branch ownership and handoff rules are in
 [AGENTS.md](AGENTS.md).
+
+Contribution and security guidance are in
+[CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).

@@ -10,6 +10,9 @@ __pycache__/
 dist/
 build/
 coverage/
+coverage.out
+coverage.txt
+*.coverprofile
 
 # Logs and local env
 *.log

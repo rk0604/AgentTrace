@@ -82,9 +82,17 @@ remain available.
 Each expression has a cost limit and a 250 millisecond default timeout. Checker
 and context files are limited to 2 MiB each.
 
+Checker coverage is exact. Every trace step requires one checker entry, and a
+checker entry that does not match a trace step is rejected. This catches stale
+configuration and misspelled step IDs before evaluation.
+
 ## Correctness rule
 
 A checker answers whether a step behaved correctly given the input it actually
 received. A downstream step should pass when it faithfully transforms incorrect
-upstream data. This rule allows first divergence attribution to identify the
-original source instead of the final visible symptom.
+upstream data. This rule allows attribution to identify the earliest independent
+sources instead of the final visible symptoms.
+
+AgentTrace evaluates all steps in the selected target ancestry. Independent
+failed branches become separate root causes. A failed step with a failed
+ancestor becomes a secondary divergence.

@@ -44,6 +44,16 @@ can be passed to `gather_recorded`.
 When a wrapped function raises an exception, the recorder writes structured
 failure details to that step and raises the original exception again.
 
+The recorder validates the same trace contract as the Go engine, including
+unknown fields, timestamps, finite confidence values, duplicate dependencies,
+unknown dependencies, cycles, and graph size limits. JSON encoding rejects
+nonfinite numbers.
+
+`write_trace` creates files with owner read and write permissions on platforms
+that support Unix permission bits. The recorder does not infer which domain
+values are sensitive, so integrations must redact data before passing it to the
+recorder.
+
 ## Test
 
 ```powershell

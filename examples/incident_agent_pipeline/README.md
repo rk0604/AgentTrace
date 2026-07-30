@@ -5,8 +5,8 @@ than a manually assembled trace. The Python pipeline can call a live model,
 execute independent analyzers concurrently, record every actual input and
 output, and hand the completed trace to the Go attribution engine.
 
-Replay mode remains deterministic and requires no API key, network access, or
-model cost.
+Replay mode remains deterministic and requires no API key, model request, or
+model cost after its local Python dependency is installed.
 
 ## Business Goal
 
@@ -65,7 +65,7 @@ model analyzers execute concurrently.
 
 | Mode | Behavior |
 | --- | --- |
-| `replay` | Uses checked-in structured model responses |
+| `replay` | Uses checked-in versioned request and response transcripts |
 | `live` | Calls the OpenAI Responses API |
 
 Both modes support:
@@ -76,13 +76,22 @@ Both modes support:
 | `metrics` | Metrics Analyzer reports critical metrics as normal |
 | `deployment` | Deployment Analyzer selects the wrong deployment |
 
-Replay failure files also contain downstream responses that are correct for the
-bad input they received. In live mode, only the selected source analyzer is
-overridden and later model calls process that result normally.
+Each replay exchange stores the expected input and output for a model step. A
+replay fails if actual pipeline input differs from the stored request, so a
+fixture cannot hide broken data wiring. Failure transcripts also contain
+downstream responses that are correct for the bad input they received. In live
+mode, only the selected source analyzer is overridden and later model calls
+process that result normally.
 
 ## Run Replay Mode
 
 Run commands from the repository root.
+
+Install the replay dependency:
+
+```powershell
+python -m pip install -r ./examples/incident_agent_pipeline/requirements.txt
+```
 
 Healthy pipeline:
 
@@ -146,7 +155,7 @@ go run ./cmd/agenttrace run `
 ```
 
 The final command exits with code `1` for metrics and deployment failure traces
-after writing the complete JSON attribution result.
+after writing the privacy safe JSON attribution result.
 
 ## Run Live Mode
 
@@ -206,18 +215,26 @@ fails:
 3. A valid partial trace is written.
 4. The Python command exits with code `1`.
 
-The model client performs two attempts by default and applies a separate timeout
-to each attempt.
+The live client uses the asynchronous OpenAI SDK. Each attempt has both an SDK
+network timeout and a cancellable coroutine deadline. AgentTrace disables
+hidden SDK retries, retries only connection, timeout, rate limit, conflict, and
+server failures, and uses exponential backoff with bounded jitter. Permanent
+request, authentication, contract, and malformed output failures are not
+retried.
 
 ## Redaction
 
 Trace data is redacted before it enters the recorder.
 
-The following key names are redacted automatically:
+Common secret key names and variants are redacted automatically, including:
 
 * `api_key`
+* `x-api-key`
 * `authorization`
+* `clientSecret`
+* `cookie`
 * `password`
+* `private_key`
 * `secret`
 * `token`
 
@@ -230,6 +247,9 @@ $env:AGENTTRACE_REDACT_VALUES = "internal-secret,customer-identifier"
 
 Redaction protects trace output. It does not change the unredacted values used
 by in-process pipeline logic or model calls.
+
+Trace and summary files are created with owner read and write permissions on
+platforms that support Unix permission bits.
 
 ## Tests
 
@@ -252,10 +272,11 @@ The test matrix covers:
 * Healthy, metrics failure, and deployment failure replays
 * Exact 13-step dependencies
 * Parallel analyzer execution
-* Strict output contract validation
-* Retry, malformed response, and timeout handling
+* Standards compliant model input and output schema validation
+* Replay input drift detection
+* Selective retry, malformed response, cancellation, and timeout handling
 * Valid partial traces
-* Secret redaction
+* Secret key variant and literal redaction
 * Healthy attribution
 * Metrics and deployment root cause attribution
 * Downstream correctness against actual inputs
@@ -269,9 +290,9 @@ without credentials or nondeterminism.
 | Path | Purpose |
 | --- | --- |
 | `fixtures` | Alert, logs, metrics, deployments, and runbook |
-| `replays` | Healthy responses and semantic failure overlays |
+| `replays` | Complete versioned model request and response transcripts |
 | `traces` | Checked-in complete traces used by Go integration tests |
-| `contracts.py` | Step IDs, dependencies, and strict JSON schemas |
+| `contracts.py` | Step IDs, dependencies, and compiled JSON Schema contracts |
 | `fixtures.py` | Fixture loading and consistency validation |
 | `model_runtime.py` | Replay, live, retry, timeout, and fault clients |
 | `pipeline.py` | 13-step orchestration and trace recording |
