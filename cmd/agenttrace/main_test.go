@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/rk0604/AgentTrace/attrib"
 )
 
 func TestRunCommandLineRequiresExplicitCommand(t *testing.T) {
@@ -23,6 +27,165 @@ func TestRunCommandLineRejectsUnknownCommand(t *testing.T) {
 func TestRunCommandLineAcceptsHelp(t *testing.T) {
 	if err := runCommandLine([]string{"help"}); err != nil {
 		t.Fatalf("runCommandLine returned error: %v", err)
+	}
+}
+
+// TestRenderFlowChartUsesBoxesWithinBudget verifies the normal graph view.
+//
+// Input
+// t pointer to testing.T
+// Test state and failure reporting.
+//
+// Output
+// None
+// The test fails when a small graph does not use the boxed layout.
+func TestRenderFlowChartUsesBoxesWithinBudget(t *testing.T) {
+	view := stepView{
+		Step: attrib.Step{
+			StepID:    "source",
+			AgentName: "Source",
+		},
+		Checked: true,
+	}
+	lines := renderFlowChart(
+		[]graphLevel{{Index: 0, Views: []stepView{view}}},
+		nil,
+		0,
+		attrib.AttributionResult{},
+	)
+	output := strings.Join(lines, "\n")
+
+	if !strings.Contains(output, boxTop()) {
+		t.Fatalf("expected boxed graph, got:\n%s", output)
+	}
+	if strings.Contains(output, "layout omitted") {
+		t.Fatalf("expected canvas layout, got:\n%s", output)
+	}
+}
+
+// TestRenderFlowChartBoundsWideGraphs verifies the compact graph fallback.
+//
+// Input
+// t pointer to testing.T
+// Test state and failure reporting.
+//
+// Output
+// None
+// The test fails when a wide graph attempts an unbounded canvas.
+func TestRenderFlowChartBoundsWideGraphs(t *testing.T) {
+	views := make([]stepView, maxGraphCanvasNodes+1)
+	for index := range views {
+		views[index] = stepView{
+			Step: attrib.Step{
+				StepID:    fmt.Sprintf("step-%03d", index),
+				AgentName: "Worker",
+			},
+			Checked: true,
+		}
+	}
+
+	lines := renderFlowChart(
+		[]graphLevel{{Index: 0, Views: views}},
+		nil,
+		0,
+		attrib.AttributionResult{},
+	)
+	output := strings.Join(lines, "\n")
+
+	if !strings.Contains(output, "layout omitted") {
+		t.Fatalf("expected compact fallback, got:\n%s", output)
+	}
+	if len(lines) > maxRenderedGraphNodes+5 {
+		t.Fatalf("compact graph returned too many lines: %d", len(lines))
+	}
+}
+
+// TestGraphEdgesPrioritizesCauseEdges verifies bounded edge selection.
+//
+// Input
+// t pointer to testing.T
+// Test state and failure reporting.
+//
+// Output
+// None
+// The test fails when an omitted regular edge hides a cause edge.
+func TestGraphEdgesPrioritizesCauseEdges(t *testing.T) {
+	views := make([]stepView, maxRenderedGraphEdges+2)
+	dependencies := make([]string, maxRenderedGraphEdges+1)
+	for index := range dependencies {
+		stepID := fmt.Sprintf("source-%03d", index)
+		dependencies[index] = stepID
+		views[index] = stepView{
+			Step: attrib.Step{StepID: stepID},
+		}
+	}
+	targetID := "target"
+	views[len(views)-1] = stepView{
+		Step: attrib.Step{
+			StepID:    targetID,
+			DependsOn: dependencies,
+		},
+	}
+	causeSourceID := dependencies[len(dependencies)-1]
+	result := attrib.AttributionResult{
+		PotentialPropagationEdges: []attrib.CauseEdge{
+			{
+				FromStepID: causeSourceID,
+				ToStepID:   targetID,
+			},
+		},
+	}
+
+	edges, totalEdges := graphEdges(
+		views,
+		stepViewByID(views),
+		result,
+	)
+
+	if totalEdges != len(dependencies) {
+		t.Fatalf(
+			"expected %d total edges, got %d",
+			len(dependencies),
+			totalEdges,
+		)
+	}
+	if len(edges) != maxRenderedGraphEdges {
+		t.Fatalf(
+			"expected %d rendered edges, got %d",
+			maxRenderedGraphEdges,
+			len(edges),
+		)
+	}
+	foundCause := false
+	for _, edge := range edges {
+		if edge.Cause &&
+			edge.Source.Step.StepID == causeSourceID &&
+			edge.Target.Step.StepID == targetID {
+			foundCause = true
+		}
+	}
+	if !foundCause {
+		t.Fatal("expected bounded edge list to retain cause edge")
+	}
+}
+
+// TestFitTextPreservesUnicode verifies character based truncation.
+//
+// Input
+// t pointer to testing.T
+// Test state and failure reporting.
+//
+// Output
+// None
+// The test fails when truncation produces invalid UTF 8.
+func TestFitTextPreservesUnicode(t *testing.T) {
+	got := fitText("\u754c\u754c\u754c\u754c\u754c\u754c", 5)
+
+	if !utf8.ValidString(got) {
+		t.Fatalf("fitText returned invalid UTF 8: %q", got)
+	}
+	if utf8.RuneCountInString(got) != 5 {
+		t.Fatalf("expected five characters, got %q", got)
 	}
 }
 

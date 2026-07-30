@@ -18,10 +18,17 @@ import (
 )
 
 const (
-	maxTraceFileBytes   int64 = 16 * 1024 * 1024
-	maxCheckerFileBytes int64 = 2 * 1024 * 1024
-	maxContextFileBytes int64 = 2 * 1024 * 1024
-	maxEvidenceTextSize       = 1200
+	maxTraceFileBytes     int64 = 16 * 1024 * 1024
+	maxCheckerFileBytes   int64 = 2 * 1024 * 1024
+	maxContextFileBytes   int64 = 2 * 1024 * 1024
+	maxEvidenceTextSize         = 1200
+	maxGraphCanvasNodes         = 64
+	maxGraphCanvasWidth         = 160
+	maxGraphCanvasHeight        = 120
+	maxGraphCanvasCells         = 160 * 120
+	maxGraphCanvasEdges         = 96
+	maxRenderedGraphNodes       = 100
+	maxRenderedGraphEdges       = 256
 )
 
 const (
@@ -1016,11 +1023,16 @@ func printFlowChart(views []stepView, result attrib.AttributionResult) {
 	viewsByID := stepViewByID(views)
 	levelsByID := graphLevelsByID(views, viewsByID)
 	levels := graphLevels(views, levelsByID)
-	edges := graphEdges(views, viewsByID, result)
+	edges, totalEdges := graphEdges(views, viewsByID, result)
 
 	fmt.Printf("Flow chart\n")
 	fmt.Printf("\n")
-	for _, line := range renderFlowChart(levels, edges, result) {
+	for _, line := range renderFlowChart(
+		levels,
+		edges,
+		totalEdges,
+		result,
+	) {
 		fmt.Printf("%s\n", line)
 	}
 
@@ -1034,7 +1046,7 @@ func printFlowChart(views []stepView, result attrib.AttributionResult) {
 		}
 		fmt.Printf("\nMarked nodes: %s\n", strings.Join(rootCauseIDs, ", "))
 		fmt.Printf(
-			"Marked edges: potential propagation leaving root causes\n",
+			"Marked edges: # shows potential failure propagation\n",
 		)
 	}
 }
@@ -1048,14 +1060,30 @@ func printFlowChart(views []stepView, result attrib.AttributionResult) {
 // edges []graphEdge
 // Dependency edges in the graph.
 //
+// totalEdges int
+// Total dependency edge count before display limits.
+//
 // result attrib.AttributionResult
 // Root cause attribution result.
 //
 // Output
 // []string
 // Lines that form the rendered graph diagram.
-func renderFlowChart(levels []graphLevel, edges []graphEdge, result attrib.AttributionResult) []string {
-	placements, width, height := graphPlacements(levels)
+func renderFlowChart(
+	levels []graphLevel,
+	edges []graphEdge,
+	totalEdges int,
+	result attrib.AttributionResult,
+) []string {
+	if totalEdges > maxGraphCanvasEdges {
+		return renderCompactFlowChart(levels, edges, totalEdges)
+	}
+
+	placements, width, height, fits := graphPlacements(levels)
+	if !fits {
+		return renderCompactFlowChart(levels, edges, totalEdges)
+	}
+
 	canvas := newCanvas(width, height)
 
 	for _, edge := range edges {
@@ -1069,6 +1097,90 @@ func renderFlowChart(levels []graphLevel, edges []graphEdge, result attrib.Attri
 	}
 
 	return canvasLines(canvas)
+}
+
+// renderCompactFlowChart builds a bounded text view for a large graph.
+//
+// Input
+// levels []graphLevel
+// Nodes grouped by visual level.
+//
+// edges []graphEdge
+// Dependency edges retained for display.
+//
+// totalEdges int
+// Total dependency edge count before display limits.
+//
+// Output
+// []string
+// Bounded node and edge lines.
+func renderCompactFlowChart(
+	levels []graphLevel,
+	edges []graphEdge,
+	totalEdges int,
+) []string {
+	lines := []string{
+		"Box layout omitted because the graph exceeds the display budget",
+		"Nodes",
+	}
+
+	totalNodes := 0
+	renderedNodes := 0
+	for _, level := range levels {
+		totalNodes += len(level.Views)
+		for _, view := range level.Views {
+			if renderedNodes >= maxRenderedGraphNodes {
+				continue
+			}
+
+			lines = append(
+				lines,
+				fmt.Sprintf(
+					"  L%d [%s] %s (%s)",
+					level.Index,
+					chartStatusText(view),
+					fitText(view.Step.AgentName, 40),
+					fitText(view.Step.StepID, 40),
+				),
+			)
+			renderedNodes++
+		}
+	}
+	if renderedNodes < totalNodes {
+		lines = append(
+			lines,
+			fmt.Sprintf(
+				"  %d additional nodes omitted",
+				totalNodes-renderedNodes,
+			),
+		)
+	}
+
+	lines = append(lines, "Edges")
+	for _, edge := range edges {
+		marker := " -> "
+		if edge.Cause {
+			marker = " == CAUSE ==> "
+		}
+		lines = append(
+			lines,
+			"  "+
+				fitText(edge.Source.Step.StepID, 40)+
+				marker+
+				fitText(edge.Target.Step.StepID, 40),
+		)
+	}
+	if len(edges) < totalEdges {
+		lines = append(
+			lines,
+			fmt.Sprintf(
+				"  %d additional edges omitted",
+				totalEdges-len(edges),
+			),
+		)
+	}
+
+	return lines
 }
 
 // graphPlacements computes node positions for the ASCII canvas.
@@ -1086,15 +1198,29 @@ func renderFlowChart(levels []graphLevel, edges []graphEdge, result attrib.Attri
 //
 // int
 // Canvas height.
-func graphPlacements(levels []graphLevel) (map[string]nodePlacement, int, int) {
+//
+// bool
+// True when the graph fits within the canvas budget.
+func graphPlacements(
+	levels []graphLevel,
+) (map[string]nodePlacement, int, int, bool) {
 	const boxWidth = 24
 	const boxHeight = 4
 	const horizontalGap = 8
 	const verticalGap = 5
 
+	nodeCount := 0
 	maxLevelWidth := 0
 	for _, level := range levels {
+		nodeCount += len(level.Views)
+		if nodeCount > maxGraphCanvasNodes {
+			return nil, 0, 0, false
+		}
+
 		levelWidth := len(level.Views)*boxWidth + maxInt(0, len(level.Views)-1)*horizontalGap
+		if levelWidth > maxGraphCanvasWidth {
+			return nil, 0, 0, false
+		}
 		if levelWidth > maxLevelWidth {
 			maxLevelWidth = levelWidth
 		}
@@ -1120,8 +1246,14 @@ func graphPlacements(levels []graphLevel) (map[string]nodePlacement, int, int) {
 	if len(levels) > 0 {
 		height = (len(levels)-1)*(boxHeight+verticalGap) + boxHeight
 	}
+	if height > maxGraphCanvasHeight {
+		return nil, 0, 0, false
+	}
+	if maxLevelWidth*height > maxGraphCanvasCells {
+		return nil, 0, 0, false
+	}
 
-	return placements, maxLevelWidth, height
+	return placements, maxLevelWidth, height, true
 }
 
 // newCanvas creates a blank ASCII canvas.
@@ -1203,17 +1335,13 @@ func drawConnector(canvas [][]rune, source nodePlacement, target nodePlacement, 
 		if step == steps-1 {
 			mark = 'v'
 		}
-		if cause && mark == '|' {
-			putString(canvas, x, y, "||")
-		} else {
-			putRune(canvas, x, y, mark)
+		if cause {
+			mark = '#'
+			if step == steps-1 {
+				mark = 'V'
+			}
 		}
-	}
-
-	if cause {
-		labelY := startY + steps/2
-		labelX := minInt(startX, endX) + 3
-		putString(canvas, labelX, labelY, "CAUSE EDGE")
+		putRune(canvas, x, y, mark)
 	}
 }
 
@@ -1392,13 +1520,17 @@ func graphLevels(views []stepView, levelsByID map[string]int) []graphLevel {
 //
 // Output
 // []graphEdge
-// Dependency edges with cause markers when applicable.
+// Bounded dependency edges with cause markers when applicable.
+//
+// int
+// Total dependency edge count before display limits.
 func graphEdges(
 	views []stepView,
 	viewsByID map[string]stepView,
 	result attrib.AttributionResult,
-) []graphEdge {
-	edges := make([]graphEdge, 0)
+) ([]graphEdge, int) {
+	edges := make([]graphEdge, 0, maxRenderedGraphEdges)
+	totalEdges := 0
 
 	for _, target := range views {
 		for _, sourceID := range target.Step.DependsOn {
@@ -1406,16 +1538,42 @@ func graphEdges(
 			if !exists {
 				continue
 			}
+			totalEdges++
+
+			if len(edges) < maxRenderedGraphEdges &&
+				isCauseEdge(sourceID, target.Step.StepID, result) {
+				edges = append(edges, graphEdge{
+					Source: source,
+					Target: target,
+					Cause:  true,
+				})
+			}
+		}
+	}
+
+	for _, target := range views {
+		for _, sourceID := range target.Step.DependsOn {
+			if len(edges) >= maxRenderedGraphEdges {
+				return edges, totalEdges
+			}
+
+			source, exists := viewsByID[sourceID]
+			if !exists || isCauseEdge(
+				sourceID,
+				target.Step.StepID,
+				result,
+			) {
+				continue
+			}
 
 			edges = append(edges, graphEdge{
 				Source: source,
 				Target: target,
-				Cause:  isCauseEdge(sourceID, target.Step.StepID, result),
 			})
 		}
 	}
 
-	return edges
+	return edges, totalEdges
 }
 
 // isCauseEdge reports whether an edge carries the failed output.
@@ -1451,113 +1609,6 @@ func isCauseEdge(
 	return false
 }
 
-// printLevelBoxes writes boxes for all nodes in one graph level.
-//
-// Input
-// views []stepView
-// Display rows for one visual level.
-//
-// result attrib.AttributionResult
-// Root cause attribution result.
-//
-// Output
-// None
-func printLevelBoxes(views []stepView, result attrib.AttributionResult) {
-	const maxBoxesPerRow = 3
-
-	for start := 0; start < len(views); start += maxBoxesPerRow {
-		end := start + maxBoxesPerRow
-		if end > len(views) {
-			end = len(views)
-		}
-
-		printBoxRow(views[start:end], result)
-	}
-}
-
-// printBoxRow writes one horizontal row of node boxes.
-//
-// Input
-// views []stepView
-// Display rows to render as boxes.
-//
-// result attrib.AttributionResult
-// Root cause attribution result.
-//
-// Output
-// None
-func printBoxRow(views []stepView, result attrib.AttributionResult) {
-	printRepeatedBoxLine(views, boxTop)
-
-	for _, view := range views {
-		fmt.Printf("%s  ", boxLine(view.Step.AgentName))
-	}
-	fmt.Printf("\n")
-
-	for _, view := range views {
-		fmt.Printf("%s  ", boxLine(chartNodeStatus(view, result)))
-	}
-	fmt.Printf("\n")
-
-	for _, view := range views {
-		fmt.Printf("%s  ", boxLine("id "+view.Step.StepID))
-	}
-	fmt.Printf("\n")
-
-	printRepeatedBoxLine(views, boxBottom)
-}
-
-// printRepeatedBoxLine writes one border row for each box in a row.
-//
-// Input
-// views []stepView
-// Display rows to render as boxes.
-//
-// line func() string
-// Function that returns a box border line.
-//
-// Output
-// None
-func printRepeatedBoxLine(views []stepView, line func() string) {
-	for range views {
-		fmt.Printf("%s  ", line())
-	}
-	fmt.Printf("\n")
-}
-
-// printOutgoingEdges writes edges leaving one graph level.
-//
-// Input
-// level int
-// Visual level whose outgoing edges should be displayed.
-//
-// edges []graphEdge
-// Dependency edges in the graph.
-//
-// levelsByID map[string]int
-// Visual level keyed by step ID.
-//
-// Output
-// None
-func printOutgoingEdges(level int, edges []graphEdge, levelsByID map[string]int) {
-	levelEdges := make([]graphEdge, 0)
-
-	for _, edge := range edges {
-		if levelsByID[edge.Source.Step.StepID] == level {
-			levelEdges = append(levelEdges, edge)
-		}
-	}
-
-	if len(levelEdges) == 0 {
-		return
-	}
-
-	fmt.Printf("Edges\n")
-	for _, edge := range levelEdges {
-		fmt.Printf("  %s\n", edgeText(edge))
-	}
-}
-
 // stepViewByID creates a lookup table for CLI step views.
 //
 // Input
@@ -1575,26 +1626,6 @@ func stepViewByID(views []stepView) map[string]stepView {
 	}
 
 	return viewsByID
-}
-
-// edgeText formats one dependency edge for the CLI flow chart.
-//
-// Input
-// edge graphEdge
-// Dependency edge to display.
-//
-// Output
-// string
-// Human readable edge text.
-func edgeText(edge graphEdge) string {
-	source := edge.Source.Step.StepID
-	target := edge.Target.Step.StepID
-
-	if edge.Cause {
-		return fmt.Sprintf("%s == CAUSE EDGE ==> %s", source, target)
-	}
-
-	return fmt.Sprintf("%s -> %s", source, target)
 }
 
 // chartStatusText formats one compact node status for the CLI flow chart.
@@ -1694,35 +1725,20 @@ func boxLine(text string) string {
 // string
 // Text that fits within the requested width.
 func fitText(text string, width int) string {
-	if len(text) <= width {
+	if width <= 0 {
+		return ""
+	}
+
+	characters := []rune(text)
+	if len(characters) <= width {
 		return text
 	}
 
 	if width <= 3 {
-		return text[:width]
+		return string(characters[:width])
 	}
 
-	return text[:width-3] + "..."
-}
-
-// minInt returns the smaller integer.
-//
-// Input
-// left int
-// First value.
-//
-// right int
-// Second value.
-//
-// Output
-// int
-// Smaller value.
-func minInt(left int, right int) int {
-	if left < right {
-		return left
-	}
-
-	return right
+	return string(characters[:width-3]) + "..."
 }
 
 // maxInt returns the larger integer.
