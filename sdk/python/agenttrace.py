@@ -314,6 +314,7 @@ class TraceRecorder:
         destination.write_text(
             json.dumps(self.trace(), indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
+            newline="\n",
         )
 
     def _complete_step(

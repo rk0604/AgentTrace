@@ -103,9 +103,11 @@ class TraceRecorderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "trace.json"
             recorder.write_trace(path)
+            raw = path.read_bytes()
             decoded = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(decoded["steps"][0]["output"]["text"], "résumé")
+        self.assertNotIn(b"\r\n", raw)
 
 
 class AsyncTraceRecorderTests(unittest.IsolatedAsyncioTestCase):

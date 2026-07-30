@@ -66,6 +66,9 @@ checker rules and any ground truth those rules require.
 * Python 3.10 or newer only for the optional Python recorder
 
 The demos are deterministic and require no model credentials or API keys.
+The real incident pipeline also has an offline replay mode. Live mode requires
+an OpenAI API key, an explicitly selected model, and the optional dependency
+listed by that integration.
 
 ## Setup
 
@@ -121,6 +124,39 @@ Analyze that trace independently:
 go run ./cmd/agenttrace validate --input ./document-trace.json --checkers ./examples/document-checkers-v2.json --context ./examples/document-context.json
 go run ./cmd/agenttrace run --input ./document-trace.json --checkers ./examples/document-checkers-v2.json --context ./examples/document-context.json
 ```
+
+## Real Agent Pipeline
+
+The repository includes a recorded 13-step incident investigation assistant. It
+analyzes checkout alerts, logs, metrics, deployments, and runbook guidance to
+produce an evidence-backed diagnosis and remediation plan. Analyzer branches run
+concurrently, and no step can execute production changes.
+
+Run the healthy pipeline without credentials:
+
+```powershell
+python -m examples.incident_agent_pipeline --mode replay --failure none --trace-output ./incident-agent-trace.json
+```
+
+Analyze its trace:
+
+```powershell
+go run ./cmd/agenttrace run --input ./incident-agent-trace.json --checkers ./examples/incident_agent_pipeline/checkers-v2.json --context ./examples/incident_agent_pipeline/context.json
+```
+
+Demonstrate upstream attribution:
+
+```powershell
+python -m examples.incident_agent_pipeline --mode replay --failure metrics --trace-output ./incident-agent-trace.json
+go run ./cmd/agenttrace run --input ./incident-agent-trace.json --checkers ./examples/incident_agent_pipeline/checkers-v2.json --context ./examples/incident_agent_pipeline/context.json
+```
+
+The final summary follows the bad metric finding and reports an application
+error. AgentTrace still attributes the first divergence to `metrics_analyzer`.
+
+For live model calls, installation, environment variables, architecture, and
+failure modes, see
+[examples/incident_agent_pipeline/README.md](examples/incident_agent_pipeline/README.md).
 
 ## Developer Integration
 
@@ -278,9 +314,13 @@ expression, actual input and output, expected context, checked steps, affected
 steps, and propagation edges. A healthy result has status `passed` and no root
 cause.
 
-The process exit code reports whether the command completed successfully. A
-valid analysis can exit with code `0` while returning status `failed`. CI must
-inspect the JSON status when an attributed pipeline failure should fail a build.
+By default, the process exit code reports whether analysis completed, so a valid
+result with status `failed` exits with code `0`. Add `--fail-on-attribution` to
+return code `1` after writing a failed result:
+
+```powershell
+go run ./cmd/agenttrace run --input ./trace.json --checkers ./checkers.json --context ./context.json --json --fail-on-attribution
+```
 
 ## Go Recorder
 
@@ -389,6 +429,8 @@ go run ./cmd/agenttrace demo document --failure none
 ```
 
 All demos support human output, `--json`, or `--output`.
+The separate real incident pipeline is documented under
+`examples/incident_agent_pipeline`.
 
 ## Operational Behavior
 
@@ -408,7 +450,7 @@ Process exit codes:
 | Code | Meaning |
 | --- | --- |
 | `0` | Command completed |
-| `1` | Runtime, file, graph, or evaluation error |
+| `1` | Runtime, file, graph, evaluation, or enabled attribution gate failure |
 | `2` | Invalid command usage |
 
 Structured command errors can be enabled on standard error:
@@ -441,6 +483,12 @@ python -m unittest -v
 cd ../..
 ```
 
+Run real incident pipeline tests:
+
+```powershell
+python -m unittest discover -s ./examples/incident_agent_pipeline/tests -v
+```
+
 Run the cross language example:
 
 ```powershell
@@ -454,9 +502,9 @@ Run one focused attribution test:
 go test ./documentdemo -run TestDocumentConfigurationAttributesFailureModes -v
 ```
 
-GitHub Actions checks formatting, runs Go tests with race detection, runs
-`go vet`, runs Python tests, validates a Python generated trace, and executes the
-contextual document demo.
+GitHub Actions checks formatting, runs Go tests with race detection, runs both
+Python suites, regenerates and compares all incident replay traces, validates a
+generated incident trace, and verifies the attribution failure exit gate.
 
 ## Project Structure
 
@@ -471,7 +519,8 @@ contextual document demo.
 | `toypipeline` | Four step introductory pipeline |
 | `integration` | Cross language integration tests |
 | `cmd/agenttrace` | CLI and ASCII DAG renderer |
-| `examples` | Traces, checkers, contexts, and Python example |
+| `examples/incident_agent_pipeline` | Live and replay 13-step Python pipeline |
+| `examples` | Traces, checkers, contexts, and Python examples |
 | `docs` | Detailed trace and checker contracts |
 
 ## Repository Workflow

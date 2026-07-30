@@ -17,6 +17,13 @@ coverage/
 .env.*
 !.env.example
 
+# Local AgentTrace output
+agenttrace.exe
+attribution-result.json
+document-trace.json
+incident-agent-trace.json
+python-trace.json
+
 # Editor and OS noise
 .DS_Store
 Thumbs.db

@@ -48,6 +48,12 @@ jobs:
         working-directory: sdk/python
         run: python -m unittest -v
 
+      - name: Run incident agent pipeline tests
+        run: >-
+          python -m unittest discover
+          -s examples/incident_agent_pipeline/tests
+          -v
+
       - name: Generate Python integration trace
         run: python examples/python_recorded_pipeline.py "${{ runner.temp }}/python-trace.json"
 
@@ -59,3 +65,51 @@ jobs:
 
       - name: Run contextual document attribution
         run: go run ./cmd/agenttrace demo document --failure extraction --json
+
+      - name: Regenerate incident agent replay traces
+        shell: bash
+        run: |
+          python -m examples.incident_agent_pipeline \
+            --mode replay \
+            --failure none \
+            --trace-output "${RUNNER_TEMP}/incident-healthy.json" >/dev/null
+          python -m examples.incident_agent_pipeline \
+            --mode replay \
+            --failure metrics \
+            --trace-output "${RUNNER_TEMP}/incident-metrics.json" >/dev/null
+          python -m examples.incident_agent_pipeline \
+            --mode replay \
+            --failure deployment \
+            --trace-output "${RUNNER_TEMP}/incident-deployment.json" >/dev/null
+          cmp "${RUNNER_TEMP}/incident-healthy.json" \
+            examples/incident_agent_pipeline/traces/healthy.json
+          cmp "${RUNNER_TEMP}/incident-metrics.json" \
+            examples/incident_agent_pipeline/traces/metrics-failure.json
+          cmp "${RUNNER_TEMP}/incident-deployment.json" \
+            examples/incident_agent_pipeline/traces/deployment-failure.json
+
+      - name: Validate generated incident trace
+        run: >-
+          go run ./cmd/agenttrace validate
+          --input "${{ runner.temp }}/incident-healthy.json"
+          --checkers ./examples/incident_agent_pipeline/checkers-v2.json
+          --context ./examples/incident_agent_pipeline/context.json
+
+      - name: Verify attribution failure exit gate
+        shell: bash
+        run: |
+          go build -o "${RUNNER_TEMP}/agenttrace" ./cmd/agenttrace
+          set +e
+          "${RUNNER_TEMP}/agenttrace" run \
+            --input "${RUNNER_TEMP}/incident-metrics.json" \
+            --checkers ./examples/incident_agent_pipeline/checkers-v2.json \
+            --context ./examples/incident_agent_pipeline/context.json \
+            --json \
+            --fail-on-attribution \
+            >"${RUNNER_TEMP}/incident-result.json" \
+            2>"${RUNNER_TEMP}/incident-error.txt"
+          status=$?
+          set -e
+          test "${status}" -eq 1
+          python -c \
+            'import json, os; result=json.load(open(os.path.join(os.environ["RUNNER_TEMP"], "incident-result.json"))); assert result["status"] == "failed"; assert result["root_cause"]["step_id"] == "metrics_analyzer"'
