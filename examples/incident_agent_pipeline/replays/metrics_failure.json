@@ -1,0 +1,91 @@
+{
+  "metrics_analyzer": {
+    "observed_at": "2026-07-20T10:01:00Z",
+    "p95_latency_ms": 2400,
+    "latency_threshold_ms": 1000,
+    "error_rate": 0.18,
+    "connection_pool_utilization": 1.0,
+    "state": "normal",
+    "evidence_ids": [
+      "metric-001"
+    ],
+    "summary": "latency and database connection utilization are within normal limits"
+  },
+  "evidence_merger": {
+    "service": "checkout-api",
+    "error_code": "DB_CONNECTION_TIMEOUT",
+    "error_count": 2,
+    "first_error_at": "2026-07-20T10:00:02Z",
+    "metric_state": "normal",
+    "p95_latency_ms": 2400,
+    "latency_threshold_ms": 1000,
+    "metric_observed_at": "2026-07-20T10:01:00Z",
+    "connection_pool_utilization": 1.0,
+    "deployment_id": "deploy-42",
+    "deployment_at": "2026-07-20T09:55:00Z",
+    "deployment_correlated": true,
+    "changed_field": "database.connection_pool_size",
+    "before_value": 50,
+    "after_value": 5,
+    "evidence_ids": [
+      "log-001",
+      "log-002",
+      "metric-001",
+      "deployment-002"
+    ],
+    "signals": [
+      "DB_CONNECTION_TIMEOUT",
+      "normal_latency",
+      "database.connection_pool_size"
+    ]
+  },
+  "hypothesis_generator": {
+    "cause": "application_error",
+    "confidence": "medium",
+    "evidence_ids": [
+      "log-001",
+      "log-002",
+      "metric-001",
+      "deployment-002"
+    ],
+    "rationale": "database timeout errors are present but the supplied metric finding reports normal latency"
+  },
+  "impact_assessor": {
+    "severity": "SEV2",
+    "affected_service": "checkout-api",
+    "customer_impact": "degraded checkout performance",
+    "evidence_ids": [
+      "log-001",
+      "log-002",
+      "metric-001"
+    ]
+  },
+  "remediation_planner": {
+    "cause": "application_error",
+    "priority": "SEV2",
+    "actions": [
+      "collect additional evidence"
+    ],
+    "verification_steps": [
+      "confirm a supported root cause before remediation"
+    ],
+    "owner": "checkout-on-call",
+    "automatic_execution": false
+  },
+  "incident_summary": {
+    "title": "Checkout API application error investigation",
+    "root_cause": "application_error",
+    "severity": "SEV2",
+    "customer_impact": "degraded checkout performance",
+    "recommended_actions": [
+      "collect additional evidence"
+    ],
+    "evidence_ids": [
+      "log-001",
+      "log-002",
+      "metric-001",
+      "deployment-002"
+    ],
+    "automatic_execution": false
+  }
+}

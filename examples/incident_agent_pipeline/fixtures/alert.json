@@ -1,0 +1,9 @@
+{
+  "evidence_id": "alert-001",
+  "incident_id": "INC-2026-072",
+  "service": "checkout-api",
+  "environment": "production",
+  "started_at": "2026-07-20T10:00:00Z",
+  "symptom": "checkout requests are timing out",
+  "alert_name": "CheckoutLatencyHigh"
+}

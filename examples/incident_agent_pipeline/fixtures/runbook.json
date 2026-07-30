@@ -1,0 +1,20 @@
+{
+  "evidence_id": "runbook-001",
+  "runbook_id": "RB-DB-POOL-01",
+  "title": "Checkout database connection pool regression",
+  "cause": "database_connection_pool_regression",
+  "match_signals": [
+    "DB_CONNECTION_TIMEOUT",
+    "DB_POOL_EXHAUSTED",
+    "database.connection_pool_size"
+  ],
+  "recommended_actions": [
+    "restore database connection pool size to 50",
+    "restart checkout-api instances gradually"
+  ],
+  "verification_steps": [
+    "confirm p95 latency is below 1000 ms",
+    "confirm DB_CONNECTION_TIMEOUT errors return to baseline"
+  ],
+  "automatic_execution": false
+}

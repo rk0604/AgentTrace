@@ -1,0 +1,10 @@
+{
+  "evidence_id": "metric-001",
+  "observed_at": "2026-07-20T10:01:00Z",
+  "p95_latency_ms": 2400,
+  "latency_threshold_ms": 1000,
+  "error_rate": 0.18,
+  "db_connection_wait_ms": 1800,
+  "connection_pool_in_use": 5,
+  "connection_pool_limit": 5
+}

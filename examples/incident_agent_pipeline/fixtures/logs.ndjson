@@ -1,0 +1,4 @@
+{"evidence_id":"log-001","timestamp":"2026-07-20T10:00:02Z","service":"checkout-api","level":"ERROR","error_code":"DB_CONNECTION_TIMEOUT","message":"database connection acquisition exceeded 1500 ms"}
+{"evidence_id":"log-002","timestamp":"2026-07-20T10:00:03Z","service":"checkout-api","level":"ERROR","error_code":"DB_CONNECTION_TIMEOUT","message":"database connection acquisition exceeded 1500 ms"}
+{"evidence_id":"log-003","timestamp":"2026-07-20T10:00:04Z","service":"checkout-api","level":"WARN","error_code":"DB_POOL_EXHAUSTED","message":"all database connections are in use"}
+{"evidence_id":"log-004","timestamp":"2026-07-20T10:00:05Z","service":"checkout-api","level":"INFO","message":"request retry queue depth increased"}

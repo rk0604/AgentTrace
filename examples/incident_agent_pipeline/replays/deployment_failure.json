@@ -1,0 +1,91 @@
+{
+  "deployment_analyzer": {
+    "deployment_id": "deploy-41",
+    "deployed_at": "2026-07-20T08:00:00Z",
+    "changed_field": "none",
+    "before_value": 50,
+    "after_value": 50,
+    "correlated": false,
+    "evidence_ids": [
+      "deployment-001"
+    ],
+    "summary": "deploy-41 made no database connection pool change related to the incident"
+  },
+  "evidence_merger": {
+    "service": "checkout-api",
+    "error_code": "DB_CONNECTION_TIMEOUT",
+    "error_count": 2,
+    "first_error_at": "2026-07-20T10:00:02Z",
+    "metric_state": "critical",
+    "p95_latency_ms": 2400,
+    "latency_threshold_ms": 1000,
+    "metric_observed_at": "2026-07-20T10:01:00Z",
+    "connection_pool_utilization": 1.0,
+    "deployment_id": "deploy-41",
+    "deployment_at": "2026-07-20T08:00:00Z",
+    "deployment_correlated": false,
+    "changed_field": "none",
+    "before_value": 50,
+    "after_value": 50,
+    "evidence_ids": [
+      "log-001",
+      "log-002",
+      "metric-001",
+      "deployment-001"
+    ],
+    "signals": [
+      "DB_CONNECTION_TIMEOUT",
+      "critical_latency",
+      "no_correlated_deployment"
+    ]
+  },
+  "hypothesis_generator": {
+    "cause": "traffic_spike",
+    "confidence": "medium",
+    "evidence_ids": [
+      "log-001",
+      "log-002",
+      "metric-001",
+      "deployment-001"
+    ],
+    "rationale": "critical latency is present but the supplied deployment finding reports no correlated change"
+  },
+  "impact_assessor": {
+    "severity": "SEV2",
+    "affected_service": "checkout-api",
+    "customer_impact": "degraded checkout performance",
+    "evidence_ids": [
+      "log-001",
+      "log-002",
+      "metric-001"
+    ]
+  },
+  "remediation_planner": {
+    "cause": "traffic_spike",
+    "priority": "SEV2",
+    "actions": [
+      "collect additional evidence"
+    ],
+    "verification_steps": [
+      "confirm a supported root cause before remediation"
+    ],
+    "owner": "checkout-on-call",
+    "automatic_execution": false
+  },
+  "incident_summary": {
+    "title": "Checkout API traffic investigation",
+    "root_cause": "traffic_spike",
+    "severity": "SEV2",
+    "customer_impact": "degraded checkout performance",
+    "recommended_actions": [
+      "collect additional evidence"
+    ],
+    "evidence_ids": [
+      "log-001",
+      "log-002",
+      "metric-001",
+      "deployment-001"
+    ],
+    "automatic_execution": false
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "investigation_planner": {
+    "incident_id": "INC-2026-072",
+    "service": "checkout-api",
+    "tasks": [
+      "analyze_logs",
+      "analyze_metrics",
+      "analyze_deployments",
+      "load_runbook"
+    ],
+    "investigation_goal": "identify the evidence-backed cause of checkout timeouts and prepare a safe recovery plan"
+  },
+  "log_analyzer": {
+    "service": "checkout-api",
+    "primary_error_code": "DB_CONNECTION_TIMEOUT",
+    "error_count": 2,
+    "first_error_at": "2026-07-20T10:00:02Z",
+    "evidence_ids": [
+      "log-001",
+      "log-002"
+    ],
+    "summary": "two database connection acquisition timeouts began immediately after the incident started"
+  },
+  "metrics_analyzer": {
+    "observed_at": "2026-07-20T10:01:00Z",
+    "p95_latency_ms": 2400,
+    "latency_threshold_ms": 1000,
+    "error_rate": 0.18,
+    "connection_pool_utilization": 1.0,
+    "state": "critical",
+    "evidence_ids": [
+      "metric-001"
+    ],
+    "summary": "p95 latency exceeds its threshold while all configured database connections are in use"
+  },
+  "deployment_analyzer": {
+    "deployment_id": "deploy-42",
+    "deployed_at": "2026-07-20T09:55:00Z",
+    "changed_field": "database.connection_pool_size",
+    "before_value": 50,
+    "after_value": 5,
+    "correlated": true,
+    "evidence_ids": [
+      "deployment-002"
+    ],
+    "summary": "deploy-42 reduced the database connection pool five minutes before the incident"
+  },
+  "evidence_merger": {
+    "service": "checkout-api",
+    "error_code": "DB_CONNECTION_TIMEOUT",
+    "error_count": 2,
+    "first_error_at": "2026-07-20T10:00:02Z",
+    "metric_state": "critical",
+    "p95_latency_ms": 2400,
+    "latency_threshold_ms": 1000,
+    "metric_observed_at": "2026-07-20T10:01:00Z",
+    "connection_pool_utilization": 1.0,
+    "deployment_id": "deploy-42",
+    "deployment_at": "2026-07-20T09:55:00Z",
+    "deployment_correlated": true,
+    "changed_field": "database.connection_pool_size",
+    "before_value": 50,
+    "after_value": 5,
+    "evidence_ids": [
+      "log-001",
+      "log-002",
+      "metric-001",
+      "deployment-002"
+    ],
+    "signals": [
+      "DB_CONNECTION_TIMEOUT",
+      "critical_latency",
+      "database.connection_pool_size"
+    ]
+  },
+  "hypothesis_generator": {
+    "cause": "database_connection_pool_regression",
+    "confidence": "high",
+    "evidence_ids": [
+      "log-001",
+      "log-002",
+      "metric-001",
+      "deployment-002"
+    ],
+    "rationale": "critical latency and database timeouts began after deploy-42 reduced the connection pool from 50 to 5"
+  },
+  "impact_assessor": {
+    "severity": "SEV1",
+    "affected_service": "checkout-api",
+    "customer_impact": "checkout requests are timing out for customers",
+    "evidence_ids": [
+      "log-001",
+      "log-002",
+      "metric-001"
+    ]
+  },
+  "remediation_planner": {
+    "cause": "database_connection_pool_regression",
+    "priority": "SEV1",
+    "actions": [
+      "restore database connection pool size to 50",
+      "restart checkout-api instances gradually"
+    ],
+    "verification_steps": [
+      "confirm p95 latency is below 1000 ms",
+      "confirm DB_CONNECTION_TIMEOUT errors return to baseline"
+    ],
+    "owner": "checkout-on-call",
+    "automatic_execution": false
+  },
+  "incident_summary": {
+    "title": "Checkout API database connection pool incident",
+    "root_cause": "database_connection_pool_regression",
+    "severity": "SEV1",
+    "customer_impact": "checkout requests are timing out for customers",
+    "recommended_actions": [
+      "restore database connection pool size to 50",
+      "restart checkout-api instances gradually"
+    ],
+    "evidence_ids": [
+      "log-001",
+      "log-002",
+      "metric-001",
+      "deployment-002"
+    ],
+    "automatic_execution": false
+  }
+}
