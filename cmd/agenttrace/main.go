@@ -73,8 +73,9 @@ func (usage usageError) ExitCode() int {
 }
 
 type outputOptions struct {
-	JSON       bool
-	OutputPath string
+	JSON              bool
+	OutputPath        string
+	FailOnAttribution bool
 }
 
 type stepView struct {
@@ -154,7 +155,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  demo      Run toy, incident, or document")
 	fmt.Fprintln(writer, "")
 	fmt.Fprintln(writer, "Run examples")
-	fmt.Fprintln(writer, "  agenttrace run --input trace.json --checkers checkers.json [--context context.json]")
+	fmt.Fprintln(writer, "  agenttrace run --input trace.json --checkers checkers.json [--context context.json] [--fail-on-attribution]")
 	fmt.Fprintln(writer, "  agenttrace validate --input trace.json --checkers checkers.json [--context context.json]")
 	fmt.Fprintln(writer, "  agenttrace demo document --failure extraction")
 }
@@ -383,6 +384,7 @@ func addOutputFlags(flags *flag.FlagSet) *outputOptions {
 	options := &outputOptions{}
 	flags.BoolVar(&options.JSON, "json", false, "write only the JSON attribution result to standard output")
 	flags.StringVar(&options.OutputPath, "output", "", "write the JSON attribution result to a file")
+	flags.BoolVar(&options.FailOnAttribution, "fail-on-attribution", false, "return exit code 1 when attribution status is failed")
 	return options
 }
 
@@ -438,7 +440,10 @@ func executeAttribution(trace attrib.Trace, checkers map[string]attrib.StepCheck
 		return err
 	}
 	if output.JSON {
-		return attrib.EncodeResult(os.Stdout, result)
+		if err := attrib.EncodeResult(os.Stdout, result); err != nil {
+			return err
+		}
+		return attributionFailure(result, output.FailOnAttribution)
 	}
 	if output.OutputPath != "" {
 		if err := writeResultFile(output.OutputPath, result); err != nil {
@@ -452,7 +457,34 @@ func executeAttribution(trace attrib.Trace, checkers map[string]attrib.StepCheck
 		fmt.Printf("\nJSON result written to %s\n", output.OutputPath)
 	}
 
-	return nil
+	return attributionFailure(result, output.FailOnAttribution)
+}
+
+// attributionFailure creates an optional CI gate error.
+//
+// Input
+// result attrib.AttributionResult
+// Completed attribution result.
+//
+// enabled bool
+// Whether failed attribution should return a runtime error.
+//
+// Output
+// error
+// Non nil only when the gate is enabled and attribution failed.
+func attributionFailure(result attrib.AttributionResult, enabled bool) error {
+	if !enabled || result.Status != "failed" {
+		return nil
+	}
+	if result.RootCause == nil {
+		return fmt.Errorf("attribution status is failed")
+	}
+
+	return fmt.Errorf(
+		"attribution failed at step %q: %s",
+		result.RootCause.StepID,
+		result.RootCause.Reason,
+	)
 }
 
 // loadCheckers reads CEL checkers and optional context from JSON files.

@@ -99,6 +99,80 @@ func TestRunCommandAcceptsVersionTwoContext(t *testing.T) {
 	}
 }
 
+// TestRunCommandCanFailOnAttribution verifies the optional CI gate.
+//
+// Input
+// t pointer to testing.T
+// Test state and failure reporting.
+//
+// Output
+// None
+// The test fails when a failed attribution still returns success.
+func TestRunCommandCanFailOnAttribution(t *testing.T) {
+	tracePath := filepath.Join(
+		"..",
+		"..",
+		"examples",
+		"trace-reference-failure.json",
+	)
+	checkersPath := filepath.Join(
+		"..",
+		"..",
+		"examples",
+		"toy-checkers.json",
+	)
+
+	err := runTraceCommand([]string{
+		"--input", tracePath,
+		"--checkers", checkersPath,
+		"--json",
+		"--fail-on-attribution",
+	})
+
+	assertErrorContains(t, err, `attribution failed at step "reference"`)
+	if got := commandExitCode(err); got != exitCodeRuntime {
+		t.Fatalf(
+			"expected runtime exit code %d, got %d",
+			exitCodeRuntime,
+			got,
+		)
+	}
+}
+
+// TestRunCommandFailGateAllowsHealthyAttribution verifies successful CI behavior.
+//
+// Input
+// t pointer to testing.T
+// Test state and failure reporting.
+//
+// Output
+// None
+// The test fails when a healthy attribution returns a gate error.
+func TestRunCommandFailGateAllowsHealthyAttribution(t *testing.T) {
+	tracePath := filepath.Join(
+		"..",
+		"..",
+		"examples",
+		"trace-healthy.json",
+	)
+	checkersPath := filepath.Join(
+		"..",
+		"..",
+		"examples",
+		"toy-checkers.json",
+	)
+
+	err := runTraceCommand([]string{
+		"--input", tracePath,
+		"--checkers", checkersPath,
+		"--json",
+		"--fail-on-attribution",
+	})
+	if err != nil {
+		t.Fatalf("runTraceCommand returned error: %v", err)
+	}
+}
+
 func TestDemoCommandRequiresKnownDemo(t *testing.T) {
 	assertErrorContains(t, demoCommand(nil), "demo requires a name")
 	assertErrorContains(t, demoCommand([]string{"unknown"}), `unknown demo "unknown"`)
