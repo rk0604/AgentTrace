@@ -153,12 +153,12 @@
       "output": {
         "incident_id": "INC-2026-072",
         "service": "checkout-api",
-        "tasks": [
-          "analyze_logs",
-          "analyze_metrics",
-          "analyze_deployments",
-          "load_runbook"
-        ],
+        "tasks": {
+          "log_analyzer": "analyze_logs",
+          "metrics_analyzer": "analyze_metrics",
+          "deployment_analyzer": "analyze_deployments",
+          "runbook_loader": "load_runbook"
+        },
         "investigation_goal": "identify the evidence-backed cause of checkout timeouts and prepare a safe recovery plan"
       },
       "model_used": "replay/metrics",

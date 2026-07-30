@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
+
 
 INCIDENT_INTAKE = "incident_intake"
 INVESTIGATION_PLANNER = "investigation_planner"
@@ -89,6 +92,13 @@ MODEL_STEP_IDS = frozenset(
     }
 )
 
+PLANNER_TASK_IDS = (
+    LOG_ANALYZER,
+    METRICS_ANALYZER,
+    DEPLOYMENT_ANALYZER,
+    RUNBOOK_LOADER,
+)
+
 
 class ContractError(ValueError):
     """Reports a value that does not satisfy a step output contract."""
@@ -162,7 +172,14 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
         {
             "incident_id": STRING,
             "service": STRING,
-            "tasks": STRING_ARRAY,
+            "tasks": _object(
+                {
+                    LOG_ANALYZER: STRING,
+                    METRICS_ANALYZER: STRING,
+                    DEPLOYMENT_ANALYZER: STRING,
+                    RUNBOOK_LOADER: STRING,
+                }
+            ),
             "investigation_goal": STRING,
         }
     ),
@@ -290,6 +307,76 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
     ),
 }
 
+ANY_OBJECT = {"type": "object"}
+ANY_OBJECT_ARRAY = _array(ANY_OBJECT)
+
+MODEL_INPUT_SCHEMAS: dict[str, dict[str, Any]] = {
+    INVESTIGATION_PLANNER: OUTPUT_SCHEMAS[INCIDENT_INTAKE],
+    LOG_ANALYZER: _object(
+        {
+            "incident": OUTPUT_SCHEMAS[INCIDENT_INTAKE],
+            "task": STRING,
+            "logs": ANY_OBJECT_ARRAY,
+        }
+    ),
+    METRICS_ANALYZER: _object(
+        {
+            "incident": OUTPUT_SCHEMAS[INCIDENT_INTAKE],
+            "task": STRING,
+            "metrics": ANY_OBJECT,
+        }
+    ),
+    DEPLOYMENT_ANALYZER: _object(
+        {
+            "incident": OUTPUT_SCHEMAS[INCIDENT_INTAKE],
+            "task": STRING,
+            "deployments": ANY_OBJECT_ARRAY,
+        }
+    ),
+    EVIDENCE_MERGER: _object(
+        {
+            "logs": OUTPUT_SCHEMAS[LOG_ANALYZER],
+            "metrics": OUTPUT_SCHEMAS[METRICS_ANALYZER],
+            "deployment": OUTPUT_SCHEMAS[DEPLOYMENT_ANALYZER],
+        }
+    ),
+    HYPOTHESIS_GENERATOR: _object(
+        {
+            "evidence": OUTPUT_SCHEMAS[EVIDENCE_MERGER],
+            "timeline": OUTPUT_SCHEMAS[TIMELINE_BUILDER],
+        }
+    ),
+    IMPACT_ASSESSOR: _object(
+        {
+            "evidence": OUTPUT_SCHEMAS[EVIDENCE_MERGER],
+            "hypothesis": OUTPUT_SCHEMAS[HYPOTHESIS_GENERATOR],
+        }
+    ),
+    REMEDIATION_PLANNER: _object(
+        {
+            "hypothesis": OUTPUT_SCHEMAS[HYPOTHESIS_GENERATOR],
+            "impact": OUTPUT_SCHEMAS[IMPACT_ASSESSOR],
+            "runbook": OUTPUT_SCHEMAS[RUNBOOK_MATCHER],
+        }
+    ),
+    INCIDENT_SUMMARY: _object(
+        {
+            "hypothesis": OUTPUT_SCHEMAS[HYPOTHESIS_GENERATOR],
+            "impact": OUTPUT_SCHEMAS[IMPACT_ASSESSOR],
+            "remediation": OUTPUT_SCHEMAS[REMEDIATION_PLANNER],
+        }
+    ),
+}
+
+OUTPUT_VALIDATORS = {
+    step_id: Draft202012Validator(schema)
+    for step_id, schema in OUTPUT_SCHEMAS.items()
+}
+MODEL_INPUT_VALIDATORS = {
+    step_id: Draft202012Validator(schema)
+    for step_id, schema in MODEL_INPUT_SCHEMAS.items()
+}
+
 
 def validate_output(step_id: str, value: Any) -> None:
     """Validate one step output.
@@ -309,70 +396,91 @@ def validate_output(step_id: str, value: Any) -> None:
     if step_id not in OUTPUT_SCHEMAS:
         raise ContractError(f"unknown step output contract {step_id!r}")
 
-    _validate_schema(OUTPUT_SCHEMAS[step_id], value, f"output for {step_id}")
+    _validate(
+        OUTPUT_VALIDATORS[step_id],
+        value,
+        f"output for {step_id}",
+    )
 
 
-def _validate_schema(schema: dict[str, Any], value: Any, path: str) -> None:
-    """Validate a value against the supported JSON Schema subset.
+def validate_model_input(step_id: str, value: Any) -> None:
+    """Validate one model step input.
 
     Input
-    schema dict of str to Any
-    Schema containing object, array, string, number, integer, or boolean rules.
+    step_id str
+    Model backed step whose input contract should be used.
 
     value Any
-    Candidate value.
-
-    path str
-    Human readable location included in errors.
+    Candidate JSON compatible input.
 
     Output
     None
     The function returns after successful validation.
     """
 
-    value_type = schema["type"]
-    if value_type == "object":
-        if not isinstance(value, dict):
-            raise ContractError(f"{path} must be an object")
+    if step_id not in MODEL_INPUT_SCHEMAS:
+        raise ContractError(f"unknown model input contract {step_id!r}")
 
-        required = set(schema.get("required", ()))
-        missing = sorted(required.difference(value))
-        if missing:
-            raise ContractError(f"{path} is missing field {missing[0]!r}")
+    _validate(
+        MODEL_INPUT_VALIDATORS[step_id],
+        value,
+        f"input for {step_id}",
+    )
 
-        properties = schema.get("properties", {})
-        extras = sorted(set(value).difference(properties))
-        if schema.get("additionalProperties") is False and extras:
-            raise ContractError(f"{path} has unknown field {extras[0]!r}")
 
-        for field_name, field_schema in properties.items():
-            if field_name in value:
-                _validate_schema(
-                    field_schema,
-                    value[field_name],
-                    f"{path}.{field_name}",
-                )
+def _validate(
+    validator: Draft202012Validator,
+    value: Any,
+    root_path: str,
+) -> None:
+    """Validate a value with one compiled JSON Schema validator.
+
+    Input
+    validator Draft202012Validator
+    Validator for the required contract.
+
+    value Any
+    Candidate JSON compatible value.
+
+    root_path str
+    Human readable root included in errors.
+
+    Output
+    None
+    The function returns after successful validation.
+    """
+
+    errors = sorted(
+        validator.iter_errors(value),
+        key=lambda error: tuple(str(part) for part in error.absolute_path),
+    )
+    if not errors:
         return
 
-    if value_type == "array":
-        if not isinstance(value, list):
-            raise ContractError(f"{path} must be an array")
-        for index, item in enumerate(value):
-            _validate_schema(schema["items"], item, f"{path}[{index}]")
-        return
+    error = errors[0]
+    path = _error_path(root_path, error)
+    raise ContractError(f"{path}: {error.message}")
 
-    if value_type == "string":
-        valid = isinstance(value, str)
-    elif value_type == "integer":
-        valid = isinstance(value, int) and not isinstance(value, bool)
-    elif value_type == "number":
-        valid = isinstance(value, (int, float)) and not isinstance(value, bool)
-    elif value_type == "boolean":
-        valid = isinstance(value, bool)
-    else:
-        raise ContractError(f"{path} uses unsupported schema type {value_type!r}")
 
-    if not valid:
-        raise ContractError(f"{path} must be {value_type}")
-    if "enum" in schema and value not in schema["enum"]:
-        raise ContractError(f"{path} has unsupported value {value!r}")
+def _error_path(root_path: str, error: ValidationError) -> str:
+    """Build a readable path for one schema failure.
+
+    Input
+    root_path str
+    Human readable validation root.
+
+    error ValidationError
+    JSON Schema validation failure.
+
+    Output
+    str
+    Root with object fields and array indexes appended.
+    """
+
+    path = root_path
+    for part in error.absolute_path:
+        if isinstance(part, int):
+            path += f"[{part}]"
+        else:
+            path += f".{part}"
+    return path

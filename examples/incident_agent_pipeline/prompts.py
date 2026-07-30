@@ -20,6 +20,7 @@ SYSTEM_PROMPTS = {
     contracts.INVESTIGATION_PLANNER: f"""
 Act as an incident investigation planner.
 Create the four required tasks for logs, metrics, deployments, and runbook data.
+Key each task by its destination step identifier.
 State the investigation goal without diagnosing the incident yet.
 {COMMON_POLICY}
 """.strip(),

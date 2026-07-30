@@ -24,6 +24,40 @@ from examples.incident_agent_pipeline.model_runtime import (
 )
 
 
+def replay_exchange(
+    failure: str,
+    step_id: str,
+) -> dict[str, Any]:
+    """Load one stored replay exchange.
+
+    Input
+    failure str
+    Replay failure mode.
+
+    step_id str
+    Model step identifier.
+
+    Output
+    dict of str to Any
+    Stored input and output for the selected step.
+    """
+
+    file_name = (
+        "healthy.json"
+        if failure == "none"
+        else f"{failure}_failure.json"
+    )
+    path = (
+        REPOSITORY_ROOT
+        / "examples"
+        / "incident_agent_pipeline"
+        / "replays"
+        / file_name
+    )
+    document = json.loads(path.read_text(encoding="utf-8"))
+    return document["steps"][step_id]
+
+
 class FakeResponses:
     """Returns configured output text from responses.create."""
 
@@ -112,8 +146,33 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
         for failure in ("none", "metrics", "deployment"):
             client = ReplayModelClient.from_directory(failure)
             for step_id in contracts.MODEL_STEP_IDS:
-                output = await client.generate(step_id, {})
+                exchange = replay_exchange(failure, step_id)
+                output = await client.generate(step_id, exchange["input"])
                 contracts.validate_output(step_id, output)
+
+    async def test_replay_rejects_input_drift(self) -> None:
+        """Confirm that stored outputs cannot hide changed pipeline wiring."""
+
+        client = ReplayModelClient.from_directory("none")
+
+        with self.assertRaisesRegex(ModelRuntimeError, "input mismatch"):
+            await client.generate(
+                contracts.INVESTIGATION_PLANNER,
+                {
+                    "incident_id": "changed",
+                    "service": "checkout-api",
+                    "environment": "production",
+                    "started_at": "2026-07-20T10:00:00Z",
+                    "symptom": "latency",
+                    "accepted": True,
+                    "evidence_sources": [
+                        "logs",
+                        "metrics",
+                        "deployments",
+                        "runbook",
+                    ],
+                },
+            )
 
     async def test_fault_client_only_overrides_selected_step(self) -> None:
         """Confirm that live fault injection leaves other calls unchanged."""
@@ -123,10 +182,24 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(target)
         step_id, output = target or ("", {})
         client = FaultInjectingModelClient(base, step_id, output)
+        metrics_input = replay_exchange(
+            "none",
+            contracts.METRICS_ANALYZER,
+        )["input"]
+        logs_input = replay_exchange(
+            "none",
+            contracts.LOG_ANALYZER,
+        )["input"]
 
-        failed = await client.generate(contracts.METRICS_ANALYZER, {})
-        healthy = await base.generate(contracts.METRICS_ANALYZER, {})
-        logs = await client.generate(contracts.LOG_ANALYZER, {})
+        failed = await client.generate(
+            contracts.METRICS_ANALYZER,
+            metrics_input,
+        )
+        healthy = await base.generate(
+            contracts.METRICS_ANALYZER,
+            metrics_input,
+        )
+        logs = await client.generate(contracts.LOG_ANALYZER, logs_input)
 
         self.assertEqual(failed["state"], "normal")
         self.assertEqual(healthy["state"], "critical")
@@ -135,20 +208,23 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_openai_client_uses_strict_structured_output(self) -> None:
         """Confirm that live requests carry the step JSON schema."""
 
-        output = await ReplayModelClient.from_directory("none").generate(
+        exchange = replay_exchange(
+            "none",
             contracts.LOG_ANALYZER,
-            {},
         )
-        responses = FakeResponses(output)
+        responses = FakeResponses(exchange["output"])
         client = OpenAIModelClient(
             model="test-model",
             client=FakeOpenAI(responses),
             max_attempts=1,
         )
 
-        result = await client.generate(contracts.LOG_ANALYZER, {"logs": []})
+        result = await client.generate(
+            contracts.LOG_ANALYZER,
+            exchange["input"],
+        )
 
-        self.assertEqual(result, output)
+        self.assertEqual(result, exchange["output"])
         request = responses.calls[0]
         self.assertEqual(request["model"], "test-model")
         self.assertTrue(request["text"]["format"]["strict"])
@@ -160,11 +236,11 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_openai_client_retries_provider_failure(self) -> None:
         """Confirm that a transient provider error receives one retry."""
 
-        output = await ReplayModelClient.from_directory("none").generate(
+        exchange = replay_exchange(
+            "none",
             contracts.INVESTIGATION_PLANNER,
-            {},
         )
-        responses = FakeResponses(output, failures=1)
+        responses = FakeResponses(exchange["output"], failures=1)
         client = OpenAIModelClient(
             model="test-model",
             client=FakeOpenAI(responses),
@@ -172,19 +248,22 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
             retry_delay_seconds=0,
         )
 
-        result = await client.generate(contracts.INVESTIGATION_PLANNER, {})
+        result = await client.generate(
+            contracts.INVESTIGATION_PLANNER,
+            exchange["input"],
+        )
 
-        self.assertEqual(result, output)
+        self.assertEqual(result, exchange["output"])
         self.assertEqual(len(responses.calls), 2)
 
     async def test_openai_client_does_not_retry_bad_request(self) -> None:
         """Confirm that a permanent provider error is returned immediately."""
 
-        output = await ReplayModelClient.from_directory("none").generate(
+        exchange = replay_exchange(
+            "none",
             contracts.INVESTIGATION_PLANNER,
-            {},
         )
-        responses = FakeResponses(output)
+        responses = FakeResponses(exchange["output"])
 
         async def bad_request(**values: Any) -> SimpleNamespace:
             responses.calls.append(values)
@@ -199,18 +278,21 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaisesRegex(ModelRuntimeError, "after 1 attempts"):
-            await client.generate(contracts.INVESTIGATION_PLANNER, {})
+            await client.generate(
+                contracts.INVESTIGATION_PLANNER,
+                exchange["input"],
+            )
 
         self.assertEqual(len(responses.calls), 1)
 
     async def test_openai_client_uses_exponential_retry_delays(self) -> None:
         """Confirm that retry delays grow and include bounded jitter."""
 
-        output = await ReplayModelClient.from_directory("none").generate(
+        exchange = replay_exchange(
+            "none",
             contracts.INVESTIGATION_PLANNER,
-            {},
         )
-        responses = FakeResponses(output, failures=2)
+        responses = FakeResponses(exchange["output"], failures=2)
         delays: list[float] = []
 
         async def record_delay(seconds: float) -> None:
@@ -225,9 +307,12 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
             random_value=lambda: 1.0,
         )
 
-        result = await client.generate(contracts.INVESTIGATION_PLANNER, {})
+        result = await client.generate(
+            contracts.INVESTIGATION_PLANNER,
+            exchange["input"],
+        )
 
-        self.assertEqual(result, output)
+        self.assertEqual(result, exchange["output"])
         self.assertEqual(delays, [0.625, 1.25])
 
     async def test_openai_client_rejects_malformed_output(self) -> None:
@@ -245,19 +330,26 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
             client=FakeOpenAI(responses),
             max_attempts=1,
         )
+        input_data = replay_exchange(
+            "none",
+            contracts.LOG_ANALYZER,
+        )["input"]
 
         with self.assertRaisesRegex(ModelRuntimeError, "failed after 1 attempts"):
-            await client.generate(contracts.LOG_ANALYZER, {})
+            await client.generate(contracts.LOG_ANALYZER, input_data)
         self.assertEqual(len(responses.calls), 1)
 
     async def test_openai_client_times_out(self) -> None:
         """Confirm that a slow provider request respects its deadline."""
 
-        output = await ReplayModelClient.from_directory("none").generate(
+        exchange = replay_exchange(
+            "none",
             contracts.LOG_ANALYZER,
-            {},
         )
-        responses = FakeResponses(output, delay_seconds=0.05)
+        responses = FakeResponses(
+            exchange["output"],
+            delay_seconds=0.05,
+        )
         client = OpenAIModelClient(
             model="test-model",
             client=FakeOpenAI(responses),
@@ -266,7 +358,10 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaisesRegex(ModelRuntimeError, "failed after 1 attempts"):
-            await client.generate(contracts.LOG_ANALYZER, {})
+            await client.generate(
+                contracts.LOG_ANALYZER,
+                exchange["input"],
+            )
 
         self.assertEqual(responses.cancelled_requests, 1)
         self.assertEqual(responses.active_requests, 0)

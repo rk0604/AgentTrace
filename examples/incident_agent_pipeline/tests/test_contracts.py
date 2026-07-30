@@ -28,11 +28,12 @@ class ContractTests(unittest.TestCase):
             / "replays"
             / "healthy.json"
         )
-        responses = json.loads(path.read_text(encoding="utf-8"))
+        document = json.loads(path.read_text(encoding="utf-8"))
 
-        for step_id, output in responses.items():
+        for step_id, exchange in document["steps"].items():
             with self.subTest(step_id=step_id):
-                contracts.validate_output(step_id, output)
+                contracts.validate_model_input(step_id, exchange["input"])
+                contracts.validate_output(step_id, exchange["output"])
 
     def test_rejects_missing_and_unknown_fields(self) -> None:
         """Confirm that strict contracts reject incomplete or expanded output."""
@@ -40,18 +41,26 @@ class ContractTests(unittest.TestCase):
         valid = {
             "incident_id": "INC-1",
             "service": "checkout-api",
-            "tasks": ["analyze_logs"],
+            "tasks": {
+                contracts.LOG_ANALYZER: "analyze_logs",
+                contracts.METRICS_ANALYZER: "analyze_metrics",
+                contracts.DEPLOYMENT_ANALYZER: "analyze_deployments",
+                contracts.RUNBOOK_LOADER: "load_runbook",
+            },
             "investigation_goal": "find cause",
         }
 
         missing = copy.deepcopy(valid)
         del missing["service"]
-        with self.assertRaisesRegex(contracts.ContractError, "missing field"):
+        with self.assertRaisesRegex(contracts.ContractError, "required property"):
             contracts.validate_output(contracts.INVESTIGATION_PLANNER, missing)
 
         expanded = copy.deepcopy(valid)
         expanded["unexpected"] = True
-        with self.assertRaisesRegex(contracts.ContractError, "unknown field"):
+        with self.assertRaisesRegex(
+            contracts.ContractError,
+            "Additional properties",
+        ):
             contracts.validate_output(contracts.INVESTIGATION_PLANNER, expanded)
 
     def test_rejects_boolean_as_number(self) -> None:
@@ -68,8 +77,26 @@ class ContractTests(unittest.TestCase):
             "summary": "critical",
         }
 
-        with self.assertRaisesRegex(contracts.ContractError, "must be integer"):
+        with self.assertRaisesRegex(contracts.ContractError, "integer"):
             contracts.validate_output(contracts.METRICS_ANALYZER, output)
+
+    def test_rejects_model_input_with_wrong_dependency_shape(self) -> None:
+        """Confirm that model inputs must match their dependency contracts."""
+
+        input_data = {
+            "logs": {},
+            "metrics": {},
+            "deployment": {},
+        }
+
+        with self.assertRaisesRegex(
+            contracts.ContractError,
+            "required property",
+        ):
+            contracts.validate_model_input(
+                contracts.EVIDENCE_MERGER,
+                input_data,
+            )
 
 
 if __name__ == "__main__":

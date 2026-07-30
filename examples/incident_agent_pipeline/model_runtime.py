@@ -14,6 +14,7 @@ from . import contracts, prompts
 
 
 DEFAULT_REPLAY_DIRECTORY = Path(__file__).resolve().parent / "replays"
+CURRENT_REPLAY_VERSION = 1
 RETRYABLE_STATUS_CODES = frozenset({408, 409, 429})
 RETRYABLE_ERROR_NAMES = frozenset(
     {
@@ -49,38 +50,48 @@ class ReplayModelClient:
 
     def __init__(
         self,
-        responses: dict[str, Any],
+        exchanges: dict[str, Any],
         label: str,
     ) -> None:
         """Create a replay client.
 
         Input
-        responses dict of str to Any
-        Stored outputs keyed by model step ID.
+        exchanges dict of str to Any
+        Stored inputs and outputs keyed by model step ID.
 
         label str
         Replay label stored as the model name.
 
         Output
         None
-        The replay responses are validated and stored.
+        The replay exchanges are validated and stored.
         """
 
         if not label.strip():
             raise ValueError("replay label is empty")
 
         validated = {}
-        for step_id, response in responses.items():
+        for step_id, exchange in exchanges.items():
             if step_id not in contracts.MODEL_STEP_IDS:
                 raise ValueError(f"replay contains unknown model step {step_id!r}")
-            contracts.validate_output(step_id, response)
-            validated[step_id] = copy.deepcopy(response)
+            if not isinstance(exchange, dict):
+                raise ValueError(
+                    f"replay step {step_id!r} must be an object"
+                )
+            fields = set(exchange)
+            if fields != {"input", "output"}:
+                raise ValueError(
+                    f"replay step {step_id!r} must contain input and output"
+                )
+            contracts.validate_model_input(step_id, exchange["input"])
+            contracts.validate_output(step_id, exchange["output"])
+            validated[step_id] = copy.deepcopy(exchange)
 
         missing = sorted(contracts.MODEL_STEP_IDS.difference(validated))
         if missing:
             raise ValueError(f"replay is missing model step {missing[0]!r}")
 
-        self._responses = validated
+        self._exchanges = validated
         self._model_name = f"replay/{label}"
 
     @property
@@ -109,18 +120,23 @@ class ReplayModelClient:
         Model backed step identifier.
 
         input_data Any
-        Actual step input retained for interface compatibility.
+        Actual step input compared with the stored request.
 
         Output
         dict of str to Any
         Detached replay response.
         """
 
-        del input_data
         await asyncio.sleep(0)
-        if step_id not in self._responses:
+        if step_id not in self._exchanges:
             raise ModelRuntimeError(f"no replay response for step {step_id!r}")
-        return copy.deepcopy(self._responses[step_id])
+        contracts.validate_model_input(step_id, input_data)
+        exchange = self._exchanges[step_id]
+        if input_data != exchange["input"]:
+            raise ModelRuntimeError(
+                f"replay input mismatch for step {step_id!r}"
+            )
+        return copy.deepcopy(exchange["output"])
 
     @classmethod
     def from_directory(
@@ -128,7 +144,7 @@ class ReplayModelClient:
         failure: str,
         directory: Path = DEFAULT_REPLAY_DIRECTORY,
     ) -> "ReplayModelClient":
-        """Load healthy responses and an optional failure overlay.
+        """Load one complete replay transcript.
 
         Input
         failure str
@@ -145,11 +161,13 @@ class ReplayModelClient:
         if failure not in {"none", "metrics", "deployment"}:
             raise ValueError(f"unsupported replay failure {failure!r}")
 
-        responses = _load_replay_file(directory / "healthy.json")
-        if failure != "none":
-            overlay = _load_replay_file(directory / f"{failure}_failure.json")
-            responses.update(overlay)
-        return cls(responses, failure)
+        file_name = (
+            "healthy.json"
+            if failure == "none"
+            else f"{failure}_failure.json"
+        )
+        exchanges = _load_replay_steps(directory / file_name)
+        return cls(exchanges, failure)
 
 
 class FaultInjectingModelClient:
@@ -218,6 +236,7 @@ class FaultInjectingModelClient:
         Injected target output or wrapped client output.
         """
 
+        contracts.validate_model_input(step_id, input_data)
         if step_id == self._step_id:
             return copy.deepcopy(self._output)
         return await self._wrapped.generate(step_id, input_data)
@@ -336,6 +355,7 @@ class OpenAIModelClient:
 
         if step_id not in contracts.MODEL_STEP_IDS:
             raise ModelRuntimeError(f"step {step_id!r} is not model backed")
+        contracts.validate_model_input(step_id, input_data)
 
         last_error: Exception | None = None
         for attempt in range(1, self._max_attempts + 1):
@@ -410,8 +430,8 @@ class OpenAIModelClient:
                 f"model step {step_id!r} returned no output text"
             )
         try:
-            output = json.loads(output_text)
-        except json.JSONDecodeError as error:
+            output = _decode_json(output_text)
+        except ValueError as error:
             raise ModelRuntimeError(
                 f"model step {step_id!r} returned invalid JSON"
             ) from error
@@ -530,16 +550,16 @@ def failure_override(
     else:
         raise ValueError(f"unsupported live failure {failure!r}")
 
-    overlay = _load_replay_file(directory / f"{failure}_failure.json")
-    if step_id not in overlay:
+    exchanges = _load_replay_steps(directory / f"{failure}_failure.json")
+    if step_id not in exchanges:
         raise ValueError(
             f"failure replay is missing target step {step_id!r}"
         )
-    return step_id, overlay[step_id]
+    return step_id, copy.deepcopy(exchanges[step_id]["output"])
 
 
-def _load_replay_file(path: Path) -> dict[str, Any]:
-    """Read one replay JSON object.
+def _load_replay_steps(path: Path) -> dict[str, Any]:
+    """Read one versioned replay transcript.
 
     Input
     path Path
@@ -547,13 +567,52 @@ def _load_replay_file(path: Path) -> dict[str, Any]:
 
     Output
     dict of str to Any
-    Stored outputs keyed by step ID.
+    Stored input and output exchanges keyed by step ID.
     """
 
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        value = _decode_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
         raise ValueError(f"load replay {path}: {error}") from error
     if not isinstance(value, dict):
         raise ValueError(f"replay {path} must contain an object")
-    return value
+    if set(value) != {"version", "steps"}:
+        raise ValueError(
+            f"replay {path} must contain version and steps"
+        )
+    if value["version"] != CURRENT_REPLAY_VERSION:
+        raise ValueError(
+            f"replay {path} uses unsupported version {value['version']!r}"
+        )
+    if not isinstance(value["steps"], dict):
+        raise ValueError(f"replay {path} steps must be an object")
+    return value["steps"]
+
+
+def _decode_json(value: str) -> Any:
+    """Decode strict JSON text.
+
+    Input
+    value str
+    JSON document.
+
+    Output
+    Any
+    Decoded JSON value with nonfinite constants rejected.
+    """
+
+    def reject_constant(constant: str) -> None:
+        """Reject one nonstandard numeric constant.
+
+        Input
+        constant str
+        Nonfinite JSON constant name.
+
+        Output
+        None
+        The function always raises ValueError.
+        """
+
+        raise ValueError(f"invalid JSON constant {constant!r}")
+
+    return json.loads(value, parse_constant=reject_constant)

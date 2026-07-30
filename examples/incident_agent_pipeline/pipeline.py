@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import sys
 import threading
 from collections.abc import Callable
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from . import contracts
+from .fixtures import validate_fixture_bundle
 from .model_runtime import ModelClient
 from .redaction import Redactor
 
@@ -129,7 +131,8 @@ class IncidentPipeline:
         Pipeline state and trace recorder are initialized.
         """
 
-        self._fixture = fixture_bundle
+        validate_fixture_bundle(fixture_bundle)
+        self._fixture = copy.deepcopy(fixture_bundle)
         self._model_client = model_client
         self._redactor = redactor or Redactor()
         self._recorder = TraceRecorder(run_id, clock=clock)
@@ -386,6 +389,7 @@ class IncidentPipeline:
             self._model_client.model_name,
         )
         try:
+            contracts.validate_model_input(step_id, input_data)
             output = await self._model_client.generate(step_id, input_data)
             contracts.validate_output(step_id, output)
         except Exception as error:
@@ -480,22 +484,22 @@ def _build_branch_inputs(
     return {
         contracts.LOG_ANALYZER: {
             "incident": incident,
-            "task": plan["tasks"][0],
+            "task": plan["tasks"][contracts.LOG_ANALYZER],
             "logs": fixture["logs"],
         },
         contracts.METRICS_ANALYZER: {
             "incident": incident,
-            "task": plan["tasks"][1],
+            "task": plan["tasks"][contracts.METRICS_ANALYZER],
             "metrics": fixture["metrics"],
         },
         contracts.DEPLOYMENT_ANALYZER: {
             "incident": incident,
-            "task": plan["tasks"][2],
+            "task": plan["tasks"][contracts.DEPLOYMENT_ANALYZER],
             "deployments": fixture["deployments"],
         },
         contracts.RUNBOOK_LOADER: {
             "incident": incident,
-            "task": plan["tasks"][3],
+            "task": plan["tasks"][contracts.RUNBOOK_LOADER],
             "runbook": fixture["runbook"],
         },
     }

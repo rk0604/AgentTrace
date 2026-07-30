@@ -32,7 +32,7 @@
           "failure_reason": "Investigation Planner changed the incident identity"
         },
         {
-          "expression": "output.tasks == [\"analyze_logs\", \"analyze_metrics\", \"analyze_deployments\", \"load_runbook\"]",
+          "expression": "output.tasks.log_analyzer == \"analyze_logs\" && output.tasks.metrics_analyzer == \"analyze_metrics\" && output.tasks.deployment_analyzer == \"analyze_deployments\" && output.tasks.runbook_loader == \"load_runbook\"",
           "failure_reason": "Investigation Planner produced an incomplete task list"
         },
         {
