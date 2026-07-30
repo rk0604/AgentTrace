@@ -459,7 +459,7 @@ def _validate(
 
     error = errors[0]
     path = _error_path(root_path, error)
-    raise ContractError(f"{path}: {error.message}")
+    raise ContractError(f"{path}: {_safe_error_message(error)}")
 
 
 def _error_path(root_path: str, error: ValidationError) -> str:
@@ -484,3 +484,37 @@ def _error_path(root_path: str, error: ValidationError) -> str:
         else:
             path += f".{part}"
     return path
+
+
+def _safe_error_message(error: ValidationError) -> str:
+    """Describe a schema failure without echoing rejected values.
+
+    Input
+    error ValidationError
+    JSON Schema validation failure.
+
+    Output
+    str
+    Stable contract message containing no instance payload.
+    """
+
+    if error.validator == "required":
+        missing = sorted(
+            set(error.validator_value).difference(error.instance)
+        )
+        field_name = missing[0] if missing else "unknown"
+        return f"is missing required property {field_name!r}"
+
+    if error.validator == "additionalProperties":
+        properties = error.schema.get("properties", {})
+        extras = sorted(set(error.instance).difference(properties))
+        field_name = extras[0] if extras else "unknown"
+        return f"has unknown property {field_name!r}"
+
+    if error.validator == "type":
+        return f"must be {error.validator_value}"
+
+    if error.validator == "enum":
+        return "has unsupported enum value"
+
+    return f"does not satisfy {error.validator!r}"

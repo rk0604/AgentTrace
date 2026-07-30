@@ -379,7 +379,7 @@ class OpenAIModelClient:
 
         raise ModelRuntimeError(
             f"model step {step_id!r} failed after "
-            f"{attempt} attempts: {last_error}"
+            f"{attempt} attempts: {_safe_provider_error(last_error)}"
         ) from last_error
 
     async def _request(
@@ -521,6 +521,33 @@ def _is_retryable_provider_error(error: Exception) -> bool:
         )
 
     return type(error).__name__ in RETRYABLE_ERROR_NAMES
+
+
+def _safe_provider_error(error: Exception | None) -> str:
+    """Describe a provider failure without response body data.
+
+    Input
+    error Exception or None
+    Last request or validation failure.
+
+    Output
+    str
+    Error type with optional status code and request ID.
+    """
+
+    if error is None:
+        return "unknown error"
+
+    details = [type(error).__name__]
+    status_code = getattr(error, "status_code", None)
+    if isinstance(status_code, int):
+        details.append(f"status {status_code}")
+
+    request_id = getattr(error, "request_id", None)
+    if isinstance(request_id, str) and request_id.strip():
+        details.append(f"request {request_id.strip()}")
+
+    return ", ".join(details)
 
 
 def failure_override(

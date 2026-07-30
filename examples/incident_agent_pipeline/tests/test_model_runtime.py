@@ -121,10 +121,26 @@ class FakeResponses:
 class FakeProviderError(RuntimeError):
     """Represents one provider HTTP failure."""
 
-    def __init__(self, status_code: int) -> None:
-        """Create a provider failure with an HTTP status code."""
+    def __init__(
+        self,
+        status_code: int,
+        message: str | None = None,
+    ) -> None:
+        """Create a provider failure.
 
-        super().__init__(f"provider returned {status_code}")
+        Input
+        status_code int
+        HTTP status code exposed by the provider.
+
+        message str or None
+        Optional private response text used by safety tests.
+
+        Output
+        None
+        The provider error is initialized.
+        """
+
+        super().__init__(message or f"provider returned {status_code}")
         self.status_code = status_code
 
 
@@ -284,6 +300,36 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(len(responses.calls), 1)
+
+    async def test_openai_client_does_not_echo_provider_body(self) -> None:
+        """Confirm that runtime errors exclude provider response body data."""
+
+        exchange = replay_exchange(
+            "none",
+            contracts.INVESTIGATION_PLANNER,
+        )
+        responses = FakeResponses(exchange["output"])
+
+        async def provider_failure(**values: Any) -> SimpleNamespace:
+            responses.calls.append(values)
+            raise FakeProviderError(503, "private-response-body")
+
+        responses.create = provider_failure  # type: ignore[method-assign]
+        client = OpenAIModelClient(
+            model="test-model",
+            client=FakeOpenAI(responses),
+            max_attempts=1,
+        )
+
+        with self.assertRaises(ModelRuntimeError) as caught:
+            await client.generate(
+                contracts.INVESTIGATION_PLANNER,
+                exchange["input"],
+            )
+
+        message = str(caught.exception)
+        self.assertIn("FakeProviderError, status 503", message)
+        self.assertNotIn("private-response-body", message)
 
     async def test_openai_client_uses_exponential_retry_delays(self) -> None:
         """Confirm that retry delays grow and include bounded jitter."""

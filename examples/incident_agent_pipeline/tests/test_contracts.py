@@ -59,7 +59,7 @@ class ContractTests(unittest.TestCase):
         expanded["unexpected"] = True
         with self.assertRaisesRegex(
             contracts.ContractError,
-            "Additional properties",
+            "unknown property",
         ):
             contracts.validate_output(contracts.INVESTIGATION_PLANNER, expanded)
 
@@ -97,6 +97,25 @@ class ContractTests(unittest.TestCase):
                 contracts.EVIDENCE_MERGER,
                 input_data,
             )
+
+    def test_contract_errors_do_not_echo_rejected_values(self) -> None:
+        """Confirm that validation messages do not disclose payload values."""
+
+        output = {
+            "observed_at": "2026-07-20T10:01:00Z",
+            "p95_latency_ms": "private-customer-value",
+            "latency_threshold_ms": 1000,
+            "error_rate": 0.1,
+            "connection_pool_utilization": 1.0,
+            "state": "critical",
+            "evidence_ids": ["metric-001"],
+            "summary": "critical",
+        }
+
+        with self.assertRaises(contracts.ContractError) as caught:
+            contracts.validate_output(contracts.METRICS_ANALYZER, output)
+
+        self.assertNotIn("private-customer-value", str(caught.exception))
 
 
 if __name__ == "__main__":
