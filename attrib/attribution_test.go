@@ -250,6 +250,167 @@ func TestValidateRejectsMissingCheckerWithoutEvaluation(t *testing.T) {
 	}
 }
 
+func TestAnalyzeIgnoresFailureOutsideTargetAncestry(t *testing.T) {
+	trace := validAttributionTrace("target-run", []attrib.Step{
+		{StepID: "unrelated"},
+		{StepID: "source"},
+		{StepID: "final", DependsOn: []string{"source"}},
+	})
+	unrelatedCalled := false
+	checkers := map[string]attrib.StepChecker{
+		"unrelated": func(attrib.Step) (attrib.CheckResult, error) {
+			unrelatedCalled = true
+			return attrib.Fail("unrelated failed"), nil
+		},
+		"source": func(attrib.Step) (attrib.CheckResult, error) {
+			return attrib.Pass(), nil
+		},
+		"final": func(attrib.Step) (attrib.CheckResult, error) {
+			return attrib.Pass(), nil
+		},
+	}
+
+	result, err := attrib.Analyze(
+		trace,
+		checkers,
+		attrib.AnalysisOptions{TargetStepIDs: []string{"final"}},
+	)
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if result.Status != "passed" {
+		t.Fatalf("expected passed status, got %q", result.Status)
+	}
+	if unrelatedCalled {
+		t.Fatal("expected unrelated checker not to run")
+	}
+	assertStrings(t, result.CheckedStepIDs, []string{"source", "final"})
+	assertStrings(t, result.TargetStepIDs, []string{"final"})
+}
+
+func TestAnalyzeReturnsMultipleIndependentRootCauses(t *testing.T) {
+	trace := validAttributionTrace("multiple-roots-run", []attrib.Step{
+		{StepID: "left"},
+		{StepID: "right"},
+		{StepID: "merge", DependsOn: []string{"left", "right"}},
+	})
+	checkers := map[string]attrib.StepChecker{
+		"left": func(attrib.Step) (attrib.CheckResult, error) {
+			return attrib.Fail("left failed"), nil
+		},
+		"right": func(attrib.Step) (attrib.CheckResult, error) {
+			return attrib.Fail("right failed"), nil
+		},
+		"merge": func(attrib.Step) (attrib.CheckResult, error) {
+			return attrib.Pass(), nil
+		},
+	}
+
+	result, err := attrib.Analyze(trace, checkers, attrib.AnalysisOptions{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if len(result.RootCauses) != 2 {
+		t.Fatalf("expected two root causes, got %+v", result.RootCauses)
+	}
+	assertStrings(
+		t,
+		[]string{result.RootCauses[0].StepID, result.RootCauses[1].StepID},
+		[]string{"left", "right"},
+	)
+	if len(result.SecondaryDivergences) != 0 {
+		t.Fatalf(
+			"expected no secondary divergences, got %+v",
+			result.SecondaryDivergences,
+		)
+	}
+	assertStrings(t, result.DownstreamCandidateStepIDs, []string{"merge"})
+}
+
+func TestAnalyzeSeparatesSecondaryDivergence(t *testing.T) {
+	trace := validAttributionTrace("secondary-run", []attrib.Step{
+		{StepID: "source"},
+		{StepID: "middle", DependsOn: []string{"source"}},
+		{StepID: "final", DependsOn: []string{"middle"}},
+	})
+	checkers := map[string]attrib.StepChecker{
+		"source": func(attrib.Step) (attrib.CheckResult, error) {
+			return attrib.Fail("source failed"), nil
+		},
+		"middle": func(attrib.Step) (attrib.CheckResult, error) {
+			return attrib.Fail("middle also failed"), nil
+		},
+		"final": func(attrib.Step) (attrib.CheckResult, error) {
+			return attrib.Pass(), nil
+		},
+	}
+
+	result, err := attrib.Analyze(trace, checkers, attrib.AnalysisOptions{})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if len(result.RootCauses) != 1 ||
+		result.RootCauses[0].StepID != "source" {
+		t.Fatalf("unexpected root causes %+v", result.RootCauses)
+	}
+	if len(result.SecondaryDivergences) != 1 ||
+		result.SecondaryDivergences[0].StepID != "middle" {
+		t.Fatalf(
+			"unexpected secondary divergences %+v",
+			result.SecondaryDivergences,
+		)
+	}
+	if len(result.Divergences) != 2 {
+		t.Fatalf("expected two divergences, got %+v", result.Divergences)
+	}
+	if result.Divergences[1].Classification != "secondary_divergence" {
+		t.Fatalf(
+			"unexpected classification %q",
+			result.Divergences[1].Classification,
+		)
+	}
+}
+
+func TestAnalyzeRequiresTargetForMultipleSinks(t *testing.T) {
+	trace := validAttributionTrace("multiple-sinks-run", []attrib.Step{
+		{StepID: "left"},
+		{StepID: "right"},
+	})
+	checkers := map[string]attrib.StepChecker{
+		"left": func(attrib.Step) (attrib.CheckResult, error) {
+			return attrib.Pass(), nil
+		},
+		"right": func(attrib.Step) (attrib.CheckResult, error) {
+			return attrib.Pass(), nil
+		},
+	}
+
+	_, err := attrib.Analyze(trace, checkers, attrib.AnalysisOptions{})
+	if err == nil || !strings.Contains(err.Error(), "specify at least one target") {
+		t.Fatalf("expected target selection error, got %v", err)
+	}
+}
+
+func TestValidateRejectsCheckerForUnknownStep(t *testing.T) {
+	trace := validAttributionTrace(
+		"extra-checker-run",
+		[]attrib.Step{{StepID: "source"}},
+	)
+	checkers := map[string]attrib.StepChecker{
+		"source": func(attrib.Step) (attrib.CheckResult, error) {
+			return attrib.Pass(), nil
+		},
+		"stale": func(attrib.Step) (attrib.CheckResult, error) {
+			return attrib.Pass(), nil
+		},
+	}
+
+	err := attrib.Validate(trace, checkers)
+	if err == nil || !strings.Contains(err.Error(), "unknown step") {
+		t.Fatalf("expected extra checker error, got %v", err)
+	}
+}
+
 func checkerThatRecords(called *[]string, passed bool, reason string) attrib.StepChecker {
 	return func(step attrib.Step) (attrib.CheckResult, error) {
 		*called = append(*called, step.StepID)

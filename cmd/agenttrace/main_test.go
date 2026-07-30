@@ -99,6 +99,75 @@ func TestRunCommandAcceptsVersionTwoContext(t *testing.T) {
 	}
 }
 
+func TestRunCommandRequiresTargetForMultipleSinks(t *testing.T) {
+	directory := t.TempDir()
+	tracePath := filepath.Join(directory, "trace.json")
+	checkersPath := filepath.Join(directory, "checkers.json")
+
+	writeTestFile(t, tracePath, `{
+		"version":1,
+		"run_id":"multiple-sinks",
+		"steps":[
+			{
+				"run_id":"multiple-sinks",
+				"step_id":"left",
+				"agent_name":"Left",
+				"depends_on":[],
+				"input":{},
+				"output":{},
+				"model_used":"test",
+				"timestamp":"2026-07-30T12:00:00Z",
+				"status":"ok"
+			},
+			{
+				"run_id":"multiple-sinks",
+				"step_id":"right",
+				"agent_name":"Right",
+				"depends_on":[],
+				"input":{},
+				"output":{},
+				"model_used":"test",
+				"timestamp":"2026-07-30T12:00:01Z",
+				"status":"ok"
+			}
+		]
+	}`)
+	writeTestFile(t, checkersPath, `{
+		"version":2,
+		"steps":{
+			"left":{
+				"checks":[{
+					"expression":"true",
+					"failure_reason":"left failed"
+				}]
+			},
+			"right":{
+				"checks":[{
+					"expression":"true",
+					"failure_reason":"right failed"
+				}]
+			}
+		}
+	}`)
+
+	err := runTraceCommand([]string{
+		"--input", tracePath,
+		"--checkers", checkersPath,
+		"--json",
+	})
+	assertErrorContains(t, err, "specify at least one target")
+
+	err = runTraceCommand([]string{
+		"--input", tracePath,
+		"--checkers", checkersPath,
+		"--target", "right",
+		"--json",
+	})
+	if err != nil {
+		t.Fatalf("runTraceCommand with target returned error: %v", err)
+	}
+}
+
 // TestRunCommandCanFailOnAttribution verifies the optional CI gate.
 //
 // Input
