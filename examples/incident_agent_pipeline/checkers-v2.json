@@ -1,0 +1,281 @@
+{
+  "version": 2,
+  "steps": {
+    "incident_intake": {
+      "checks": [
+        {
+          "expression": "step.status == \"ok\"",
+          "failure_reason": "Incident Intake did not complete successfully"
+        },
+        {
+          "expression": "output.incident_id == input.alert.incident_id && output.service == input.alert.service && output.environment == input.alert.environment && output.started_at == input.alert.started_at && output.symptom == input.alert.symptom && output.accepted",
+          "failure_reason": "Incident Intake did not preserve the submitted alert"
+        },
+        {
+          "expression": "output.incident_id == expected.incident.incident_id && output.service == expected.incident.service && output.environment == expected.incident.environment && output.started_at == expected.incident.started_at && output.symptom == expected.incident.symptom",
+          "failure_reason": "Incident Intake differs from trusted incident context"
+        },
+        {
+          "expression": "output.evidence_sources == [\"logs\", \"metrics\", \"deployments\", \"runbook\"]",
+          "failure_reason": "Incident Intake omitted a required evidence source"
+        }
+      ]
+    },
+    "investigation_planner": {
+      "checks": [
+        {
+          "expression": "step.status == \"ok\"",
+          "failure_reason": "Investigation Planner did not complete successfully"
+        },
+        {
+          "expression": "output.incident_id == input.incident_id && output.service == input.service",
+          "failure_reason": "Investigation Planner changed the incident identity"
+        },
+        {
+          "expression": "output.tasks == [\"analyze_logs\", \"analyze_metrics\", \"analyze_deployments\", \"load_runbook\"]",
+          "failure_reason": "Investigation Planner produced an incomplete task list"
+        },
+        {
+          "expression": "isNonEmpty(output.investigation_goal)",
+          "failure_reason": "Investigation Planner omitted its investigation goal"
+        }
+      ]
+    },
+    "log_analyzer": {
+      "checks": [
+        {
+          "expression": "step.status == \"ok\"",
+          "failure_reason": "Log Analyzer did not complete successfully"
+        },
+        {
+          "expression": "output.service == input.incident.service && output.service == expected.incident.service",
+          "failure_reason": "Log Analyzer inspected the wrong service"
+        },
+        {
+          "expression": "output.primary_error_code == expected.logs.primary_error_code && output.error_count == expected.logs.error_count && output.first_error_at == expected.logs.first_error_at",
+          "failure_reason": "Log Analyzer misread the repeated database errors"
+        },
+        {
+          "expression": "output.evidence_ids == expected.logs.evidence_ids && isNonEmpty(output.summary)",
+          "failure_reason": "Log Analyzer returned unsupported evidence"
+        }
+      ]
+    },
+    "metrics_analyzer": {
+      "checks": [
+        {
+          "expression": "step.status == \"ok\"",
+          "failure_reason": "Metrics Analyzer did not complete successfully"
+        },
+        {
+          "expression": "output.observed_at == input.metrics.observed_at && output.p95_latency_ms == input.metrics.p95_latency_ms && output.latency_threshold_ms == input.metrics.latency_threshold_ms && output.error_rate == input.metrics.error_rate",
+          "failure_reason": "Metrics Analyzer changed the observed measurements"
+        },
+        {
+          "expression": "output.connection_pool_utilization == input.metrics.connection_pool_in_use / input.metrics.connection_pool_limit",
+          "failure_reason": "Metrics Analyzer calculated connection pool utilization incorrectly"
+        },
+        {
+          "expression": "output.state == (input.metrics.p95_latency_ms > input.metrics.latency_threshold_ms ? \"critical\" : \"normal\")",
+          "failure_reason": "Metrics Analyzer misclassified the latency threshold breach"
+        },
+        {
+          "expression": "output.state == expected.metrics.state && output.evidence_ids == expected.metrics.evidence_ids && isNonEmpty(output.summary)",
+          "failure_reason": "Metrics Analyzer differs from trusted metric context"
+        }
+      ]
+    },
+    "deployment_analyzer": {
+      "checks": [
+        {
+          "expression": "step.status == \"ok\"",
+          "failure_reason": "Deployment Analyzer did not complete successfully"
+        },
+        {
+          "expression": "output.deployment_id == expected.deployment.deployment_id && output.deployed_at == expected.deployment.deployed_at && output.changed_field == expected.deployment.changed_field",
+          "failure_reason": "Deployment Analyzer selected the wrong deployment change"
+        },
+        {
+          "expression": "output.before_value == expected.deployment.before_value && output.after_value == expected.deployment.after_value && output.correlated == expected.deployment.correlated",
+          "failure_reason": "Deployment Analyzer misread the connection pool change"
+        },
+        {
+          "expression": "output.correlated == (output.deployed_at < input.incident.started_at && output.after_value < output.before_value) && output.evidence_ids == expected.deployment.evidence_ids && isNonEmpty(output.summary)",
+          "failure_reason": "Deployment Analyzer produced unsupported correlation evidence"
+        }
+      ]
+    },
+    "runbook_loader": {
+      "checks": [
+        {
+          "expression": "step.status == \"ok\"",
+          "failure_reason": "Runbook Loader did not complete successfully"
+        },
+        {
+          "expression": "output.runbook_id == input.runbook.runbook_id && output.cause == input.runbook.cause && output.match_signals == input.runbook.match_signals",
+          "failure_reason": "Runbook Loader changed the supplied runbook identity"
+        },
+        {
+          "expression": "output.recommended_actions == input.runbook.recommended_actions && output.verification_steps == input.runbook.verification_steps && output.automatic_execution == input.runbook.automatic_execution",
+          "failure_reason": "Runbook Loader changed the supplied operational guidance"
+        },
+        {
+          "expression": "output.loaded && output.evidence_ids == [input.runbook.evidence_id]",
+          "failure_reason": "Runbook Loader did not record its source evidence"
+        }
+      ]
+    },
+    "evidence_merger": {
+      "checks": [
+        {
+          "expression": "step.status == \"ok\"",
+          "failure_reason": "Evidence Merger did not complete successfully"
+        },
+        {
+          "expression": "output.service == input.logs.service && output.error_code == input.logs.primary_error_code && output.error_count == input.logs.error_count && output.first_error_at == input.logs.first_error_at",
+          "failure_reason": "Evidence Merger changed the actual log finding"
+        },
+        {
+          "expression": "output.metric_state == input.metrics.state && output.p95_latency_ms == input.metrics.p95_latency_ms && output.latency_threshold_ms == input.metrics.latency_threshold_ms && output.metric_observed_at == input.metrics.observed_at && output.connection_pool_utilization == input.metrics.connection_pool_utilization",
+          "failure_reason": "Evidence Merger changed the actual metric finding"
+        },
+        {
+          "expression": "output.deployment_id == input.deployment.deployment_id && output.deployment_at == input.deployment.deployed_at && output.deployment_correlated == input.deployment.correlated && output.changed_field == input.deployment.changed_field && output.before_value == input.deployment.before_value && output.after_value == input.deployment.after_value",
+          "failure_reason": "Evidence Merger changed the actual deployment finding"
+        },
+        {
+          "expression": "output.evidence_ids == input.logs.evidence_ids + input.metrics.evidence_ids + input.deployment.evidence_ids",
+          "failure_reason": "Evidence Merger omitted or invented evidence identifiers"
+        },
+        {
+          "expression": "output.signals == [input.logs.primary_error_code, input.metrics.state == \"critical\" ? \"critical_latency\" : \"normal_latency\", input.deployment.correlated ? input.deployment.changed_field : \"no_correlated_deployment\"]",
+          "failure_reason": "Evidence Merger signals do not represent its actual inputs"
+        }
+      ]
+    },
+    "timeline_builder": {
+      "checks": [
+        {
+          "expression": "step.status == \"ok\"",
+          "failure_reason": "Timeline Builder did not complete successfully"
+        },
+        {
+          "expression": "size(output.events) == 3 && output.events[0].event_type == \"deployment\" && output.events[1].event_type == \"error\" && output.events[2].event_type == \"metric\"",
+          "failure_reason": "Timeline Builder omitted a required incident event"
+        },
+        {
+          "expression": "output.events[0].timestamp == input.deployment_at && output.events[1].timestamp == input.first_error_at && output.events[2].timestamp == input.metric_observed_at",
+          "failure_reason": "Timeline Builder changed an event timestamp"
+        },
+        {
+          "expression": "output.events[0].evidence_id in input.evidence_ids && output.events[1].evidence_id in input.evidence_ids && output.events[2].evidence_id in input.evidence_ids",
+          "failure_reason": "Timeline Builder referenced unknown evidence"
+        },
+        {
+          "expression": "output.ordered == (input.deployment_at < input.first_error_at && input.first_error_at < input.metric_observed_at)",
+          "failure_reason": "Timeline Builder ordered the evidence incorrectly"
+        }
+      ]
+    },
+    "hypothesis_generator": {
+      "checks": [
+        {
+          "expression": "step.status == \"ok\"",
+          "failure_reason": "Hypothesis Generator did not complete successfully"
+        },
+        {
+          "expression": "output.cause == (input.evidence.metric_state == \"critical\" && input.evidence.deployment_correlated && input.evidence.error_code == \"DB_CONNECTION_TIMEOUT\" ? \"database_connection_pool_regression\" : (input.evidence.metric_state != \"critical\" ? \"application_error\" : \"traffic_spike\"))",
+          "failure_reason": "Hypothesis Generator produced a cause inconsistent with its actual evidence"
+        },
+        {
+          "expression": "output.confidence == (input.evidence.metric_state == \"critical\" && input.evidence.deployment_correlated && input.evidence.error_code == \"DB_CONNECTION_TIMEOUT\" ? \"high\" : \"medium\")",
+          "failure_reason": "Hypothesis Generator assigned unsupported confidence"
+        },
+        {
+          "expression": "output.evidence_ids == input.evidence.evidence_ids && isNonEmpty(output.rationale)",
+          "failure_reason": "Hypothesis Generator omitted supporting evidence"
+        }
+      ]
+    },
+    "impact_assessor": {
+      "checks": [
+        {
+          "expression": "step.status == \"ok\"",
+          "failure_reason": "Impact Assessor did not complete successfully"
+        },
+        {
+          "expression": "output.severity == (input.hypothesis.confidence == \"high\" && input.evidence.error_count >= 2 ? \"SEV1\" : \"SEV2\")",
+          "failure_reason": "Impact Assessor assigned a severity inconsistent with the evidence"
+        },
+        {
+          "expression": "output.affected_service == input.evidence.service && output.customer_impact == (input.hypothesis.confidence == \"high\" && input.evidence.error_count >= 2 ? \"checkout requests are timing out for customers\" : \"degraded checkout performance\")",
+          "failure_reason": "Impact Assessor described an unsupported customer impact"
+        },
+        {
+          "expression": "size(input.evidence.evidence_ids) >= 3 && output.evidence_ids == [input.evidence.evidence_ids[0], input.evidence.evidence_ids[1], input.evidence.evidence_ids[2]]",
+          "failure_reason": "Impact Assessor returned unsupported evidence"
+        }
+      ]
+    },
+    "runbook_matcher": {
+      "checks": [
+        {
+          "expression": "step.status == \"ok\"",
+          "failure_reason": "Runbook Matcher did not complete successfully"
+        },
+        {
+          "expression": "output.runbook_id == input.runbook.runbook_id && output.cause == input.hypothesis.cause",
+          "failure_reason": "Runbook Matcher changed its hypothesis or runbook identity"
+        },
+        {
+          "expression": "output.applicable == (input.runbook.loaded && input.runbook.cause == input.hypothesis.cause)",
+          "failure_reason": "Runbook Matcher applied guidance to an unsupported cause"
+        },
+        {
+          "expression": "output.actions == (output.applicable ? input.runbook.recommended_actions : [\"collect additional evidence\"]) && output.verification_steps == (output.applicable ? input.runbook.verification_steps : [\"confirm a supported root cause before remediation\"])",
+          "failure_reason": "Runbook Matcher returned actions inconsistent with its actual inputs"
+        }
+      ]
+    },
+    "remediation_planner": {
+      "checks": [
+        {
+          "expression": "step.status == \"ok\"",
+          "failure_reason": "Remediation Planner did not complete successfully"
+        },
+        {
+          "expression": "output.cause == input.hypothesis.cause && output.priority == input.impact.severity",
+          "failure_reason": "Remediation Planner changed the diagnosis or priority"
+        },
+        {
+          "expression": "output.actions == input.runbook.actions && output.verification_steps == input.runbook.verification_steps",
+          "failure_reason": "Remediation Planner proposed actions outside the matched runbook"
+        },
+        {
+          "expression": "output.owner == \"checkout-on-call\" && !output.automatic_execution",
+          "failure_reason": "Remediation Planner produced an unsafe execution plan"
+        }
+      ]
+    },
+    "incident_summary": {
+      "checks": [
+        {
+          "expression": "step.status == \"ok\"",
+          "failure_reason": "Incident Summary did not complete successfully"
+        },
+        {
+          "expression": "output.root_cause == input.hypothesis.cause && output.severity == input.impact.severity && output.customer_impact == input.impact.customer_impact",
+          "failure_reason": "Incident Summary changed the final diagnosis or impact"
+        },
+        {
+          "expression": "output.recommended_actions == input.remediation.actions && output.evidence_ids == input.hypothesis.evidence_ids",
+          "failure_reason": "Incident Summary omitted remediation or evidence"
+        },
+        {
+          "expression": "isNonEmpty(output.title) && !output.automatic_execution",
+          "failure_reason": "Incident Summary implied unsafe automatic remediation"
+        }
+      ]
+    }
+  }
+}
