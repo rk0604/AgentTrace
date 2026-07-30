@@ -83,6 +83,7 @@ type outputOptions struct {
 	JSON              bool
 	OutputPath        string
 	FailOnAttribution bool
+	IncludeEvidence   bool
 }
 
 type stringListFlag []string
@@ -165,7 +166,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  demo      Run toy, incident, or document")
 	fmt.Fprintln(writer, "")
 	fmt.Fprintln(writer, "Run examples")
-	fmt.Fprintln(writer, "  agenttrace run --input trace.json --checkers checkers.json [--context context.json] [--target step_id] [--fail-on-attribution]")
+	fmt.Fprintln(writer, "  agenttrace run --input trace.json --checkers checkers.json [--context context.json] [--target step_id] [--include-evidence] [--fail-on-attribution]")
 	fmt.Fprintln(writer, "  agenttrace validate --input trace.json --checkers checkers.json [--context context.json]")
 	fmt.Fprintln(writer, "  agenttrace demo document --failure extraction")
 }
@@ -417,6 +418,7 @@ func addOutputFlags(flags *flag.FlagSet) *outputOptions {
 	flags.BoolVar(&options.JSON, "json", false, "write only the JSON attribution result to standard output")
 	flags.StringVar(&options.OutputPath, "output", "", "write the JSON attribution result to a file")
 	flags.BoolVar(&options.FailOnAttribution, "fail-on-attribution", false, "return exit code 1 when attribution status is failed")
+	flags.BoolVar(&options.IncludeEvidence, "include-evidence", false, "include raw input, output, and context payloads in attribution output")
 	return options
 }
 
@@ -511,20 +513,24 @@ func executeAttribution(
 	if err != nil {
 		return err
 	}
+	publishedResult := result
+	if !output.IncludeEvidence {
+		publishedResult = attrib.OmitEvidence(result)
+	}
 	if output.JSON {
-		if err := attrib.EncodeResult(os.Stdout, result); err != nil {
+		if err := attrib.EncodeResult(os.Stdout, publishedResult); err != nil {
 			return err
 		}
 		return attributionFailure(result, output.FailOnAttribution)
 	}
 	if output.OutputPath != "" {
-		if err := writeResultFile(output.OutputPath, result); err != nil {
+		if err := writeResultFile(output.OutputPath, publishedResult); err != nil {
 			return err
 		}
 	}
 
 	stepViews := buildStepViews(orderedSteps, result)
-	printReport(trace, stepViews, result)
+	printReport(trace, stepViews, publishedResult)
 	if output.OutputPath != "" {
 		fmt.Printf("\nJSON result written to %s\n", output.OutputPath)
 	}
@@ -702,9 +708,9 @@ func readLimitedFile(path string, limit int64, label string) ([]byte, error) {
 // error
 // Non nil when the file cannot be created, encoded, or closed.
 func writeResultFile(outputPath string, result attrib.AttributionResult) error {
-	file, err := os.Create(outputPath)
+	file, err := createPrivateFile(outputPath, "result file")
 	if err != nil {
-		return fmt.Errorf("create result file: %w", err)
+		return err
 	}
 
 	encodeErr := attrib.EncodeResult(file, result)
@@ -732,9 +738,9 @@ func writeResultFile(outputPath string, result attrib.AttributionResult) error {
 // error
 // Non nil when the file cannot be created, encoded, or closed.
 func writeTraceFile(outputPath string, trace attrib.Trace) error {
-	file, err := os.Create(outputPath)
+	file, err := createPrivateFile(outputPath, "trace file")
 	if err != nil {
-		return fmt.Errorf("create trace file: %w", err)
+		return err
 	}
 
 	encodeErr := attrib.EncodeTrace(file, trace)
@@ -747,6 +753,38 @@ func writeTraceFile(outputPath string, trace attrib.Trace) error {
 	}
 
 	return nil
+}
+
+// createPrivateFile creates or truncates an owner only output file.
+//
+// Input
+// outputPath string
+// Destination file path.
+//
+// label string
+// Human readable file type used in errors.
+//
+// Output
+// pointer to os.File
+// Writable output file with owner read and write permissions.
+//
+// error
+// Non nil when the file cannot be created or secured.
+func createPrivateFile(outputPath string, label string) (*os.File, error) {
+	file, err := os.OpenFile(
+		outputPath,
+		os.O_WRONLY|os.O_CREATE|os.O_TRUNC,
+		0600,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create %s: %w", label, err)
+	}
+	if err := file.Chmod(0600); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("secure %s: %w", label, err)
+	}
+
+	return file, nil
 }
 
 // buildStepViews creates display rows for the CLI graph report.
@@ -983,12 +1021,15 @@ func compactJSON(data json.RawMessage) string {
 // string
 // Original text or a bounded prefix with a truncation marker.
 func fitEvidenceText(text string) string {
-	if len(text) <= maxEvidenceTextSize {
+	characters := []rune(text)
+	if len(characters) <= maxEvidenceTextSize {
 		return text
 	}
 
 	const marker = "... truncated"
-	return text[:maxEvidenceTextSize-len(marker)] + marker
+	return string(
+		characters[:maxEvidenceTextSize-len([]rune(marker))],
+	) + marker
 }
 
 // affectedStepsText formats downstream impact for the report.

@@ -33,6 +33,34 @@ class RedactionTests(unittest.TestCase):
         self.assertEqual(redacted["nested"]["safe"], "visible")
         self.assertEqual(source["authorization"], "Bearer private-value")
 
+    def test_redacts_common_secret_key_variants(self) -> None:
+        """Confirm that separators and camel case cannot bypass redaction."""
+
+        source = {
+            "x-api-key": "first",
+            "clientSecret": "second",
+            "database_password": "third",
+            "sessionToken": "fourth",
+            "safe_key": "visible",
+        }
+
+        redacted = Redactor().redact(source)
+
+        self.assertEqual(redacted["x-api-key"], REDACTED)
+        self.assertEqual(redacted["clientSecret"], REDACTED)
+        self.assertEqual(redacted["database_password"], REDACTED)
+        self.assertEqual(redacted["sessionToken"], REDACTED)
+        self.assertEqual(redacted["safe_key"], "visible")
+
+    def test_redacts_longest_literal_secret_first(self) -> None:
+        """Confirm that overlapping secrets do not expose a suffix."""
+
+        redactor = Redactor(secret_values=("private", "private-value"))
+
+        redacted = redactor.redact("token private-value")
+
+        self.assertEqual(redacted, f"token {REDACTED}")
+
 
 if __name__ == "__main__":
     unittest.main()

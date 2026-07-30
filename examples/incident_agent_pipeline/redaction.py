@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,9 +13,31 @@ DEFAULT_SENSITIVE_KEYS = frozenset(
     {
         "api_key",
         "authorization",
+        "cookie",
+        "password",
+        "private_key",
+        "secret",
+        "token",
+    }
+)
+SENSITIVE_KEY_TERMS = frozenset(
+    {
+        "authorization",
+        "cookie",
         "password",
         "secret",
         "token",
+    }
+)
+SENSITIVE_COMPACT_KEYS = frozenset(
+    {
+        "accesskey",
+        "accesstoken",
+        "apikey",
+        "clientsecret",
+        "privatekey",
+        "refreshtoken",
+        "setcookie",
     }
 )
 
@@ -78,8 +101,7 @@ class Redactor:
         if isinstance(value, dict):
             redacted = {}
             for key, nested in value.items():
-                normalized_key = str(key).strip().lower()
-                if normalized_key in self.sensitive_keys:
+                if self._is_sensitive_key(str(key)):
                     redacted[key] = REDACTED
                 else:
                     redacted[key] = self._redact_value(nested)
@@ -90,7 +112,44 @@ class Redactor:
             return [self._redact_value(item) for item in value]
         if isinstance(value, str):
             result = value
-            for secret in self.secret_values:
+            for secret in sorted(
+                self.secret_values,
+                key=len,
+                reverse=True,
+            ):
                 result = result.replace(secret, REDACTED)
             return result
         return value
+
+    def _is_sensitive_key(self, key: str) -> bool:
+        """Report whether an object key identifies secret data.
+
+        Input
+        key str
+        Object key from a trace payload.
+
+        Output
+        bool
+        True when the normalized key is sensitive.
+        """
+
+        separated = re.sub(
+            r"([a-z0-9])([A-Z])",
+            r"\1_\2",
+            key.strip(),
+        )
+        normalized = re.sub(
+            r"[^a-z0-9]+",
+            "_",
+            separated.lower(),
+        ).strip("_")
+        compact = normalized.replace("_", "")
+        terms = frozenset(part for part in normalized.split("_") if part)
+        return (
+            normalized in self.sensitive_keys
+            or bool(terms.intersection(SENSITIVE_KEY_TERMS))
+            or any(
+                compact.endswith(suffix)
+                for suffix in SENSITIVE_COMPACT_KEYS
+            )
+        )

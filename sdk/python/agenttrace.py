@@ -7,6 +7,7 @@ import copy
 import inspect
 import json
 import math
+import os
 import re
 import threading
 from collections import deque
@@ -39,6 +40,41 @@ _RFC3339_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
     r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
 )
+
+
+def _write_private_text(destination: Path, value: str) -> None:
+    """Write UTF 8 text with owner only permissions.
+
+    Input
+    destination Path
+    Destination file path.
+
+    value str
+    Complete text to write.
+
+    Output
+    None
+    The destination is created or replaced with private permissions.
+    """
+
+    descriptor = os.open(
+        destination,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600,
+    )
+    try:
+        os.chmod(destination, 0o600)
+        with os.fdopen(
+            descriptor,
+            "w",
+            encoding="utf-8",
+            newline="\n",
+        ) as output:
+            descriptor = -1
+            output.write(value)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 class TraceRecorder:
@@ -353,12 +389,16 @@ class TraceRecorder:
 
         destination = Path(path)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(
-            json.dumps(self.trace(), indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-            newline="\n",
+        _write_private_text(
+            destination,
+            json.dumps(
+                self.trace(),
+                indent=2,
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+            + "\n",
         )
-
     def _complete_step(
         self,
         step_id: str,

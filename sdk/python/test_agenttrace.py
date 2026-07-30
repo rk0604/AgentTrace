@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -160,6 +161,8 @@ class TraceRecorderTests(unittest.TestCase):
             recorder.write_trace(path)
             raw = path.read_bytes()
             decoded = json.loads(path.read_text(encoding="utf-8"))
+            if os.name != "nt":
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
         self.assertEqual(decoded["steps"][0]["output"]["text"], "résumé")
         self.assertNotIn(b"\r\n", raw)

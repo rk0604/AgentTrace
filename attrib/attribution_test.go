@@ -47,6 +47,49 @@ func TestFindRootCauseStopsAtFirstFailureInDependencyOrder(t *testing.T) {
 	assertStrings(t, called, []string{"source", "middle"})
 }
 
+// TestOmitEvidencePreservesMetadata verifies privacy safe result copies.
+//
+// Input
+// t pointer to testing.T
+// Test state and failure reporting.
+//
+// Output
+// None
+// The test fails when evidence remains or the source result is mutated.
+func TestOmitEvidencePreservesMetadata(t *testing.T) {
+	evidence := json.RawMessage(`{"secret":"value"}`)
+	rootCause := attrib.RootCause{
+		StepID:    "source",
+		AgentName: "Source",
+		Reason:    "incorrect value",
+		Input:     evidence,
+		Output:    evidence,
+		Expected:  evidence,
+	}
+	result := attrib.AttributionResult{
+		RootCause:            &rootCause,
+		RootCauses:           []attrib.RootCause{rootCause},
+		SecondaryDivergences: []attrib.RootCause{rootCause},
+	}
+
+	summary := attrib.OmitEvidence(result)
+
+	if summary.RootCause == nil {
+		t.Fatal("expected root cause metadata")
+	}
+	if summary.RootCause.StepID != rootCause.StepID {
+		t.Fatalf("unexpected root cause step %q", summary.RootCause.StepID)
+	}
+	if len(summary.RootCause.Input) != 0 ||
+		len(summary.RootCauses[0].Output) != 0 ||
+		len(summary.SecondaryDivergences[0].Expected) != 0 {
+		t.Fatal("expected every raw evidence field to be omitted")
+	}
+	if len(result.RootCause.Input) == 0 {
+		t.Fatal("source result was mutated")
+	}
+}
+
 func TestFindRootCauseReturnsPassedWhenEveryStepPasses(t *testing.T) {
 	trace := validAttributionTrace("run-passed", []attrib.Step{
 		{StepID: "source"},

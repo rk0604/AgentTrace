@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -181,11 +182,30 @@ def _write_json(path: Path, value: Any) -> None:
     """
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(value, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-        newline="\n",
+    encoded = json.dumps(
+        value,
+        indent=2,
+        ensure_ascii=False,
+        allow_nan=False,
+    ) + "\n"
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600,
     )
+    try:
+        os.chmod(path, 0o600)
+        with os.fdopen(
+            descriptor,
+            "w",
+            encoding="utf-8",
+            newline="\n",
+        ) as output:
+            descriptor = -1
+            output.write(encoded)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -243,6 +244,15 @@ class CommandTests(unittest.TestCase):
                 summary["root_cause"],
                 "database_connection_pool_regression",
             )
+            if os.name != "nt":
+                self.assertEqual(
+                    trace_path.stat().st_mode & 0o777,
+                    0o600,
+                )
+                self.assertEqual(
+                    summary_path.stat().st_mode & 0o777,
+                    0o600,
+                )
 
 
 if __name__ == "__main__":

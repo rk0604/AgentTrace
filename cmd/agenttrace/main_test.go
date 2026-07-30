@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -405,6 +406,121 @@ func TestRunCommandFailGateAllowsHealthyAttribution(t *testing.T) {
 	}
 }
 
+// TestRunCommandOmitsEvidenceByDefault verifies safe CLI output.
+//
+// Input
+// t pointer to testing.T
+// Test state and failure reporting.
+//
+// Output
+// None
+// The test fails when raw pipeline payloads are published without opt in.
+func TestRunCommandOmitsEvidenceByDefault(t *testing.T) {
+	resultPath := filepath.Join(t.TempDir(), "result.json")
+	tracePath := filepath.Join(
+		"..",
+		"..",
+		"examples",
+		"trace-reference-failure.json",
+	)
+	checkersPath := filepath.Join(
+		"..",
+		"..",
+		"examples",
+		"toy-checkers.json",
+	)
+
+	err := runTraceCommand([]string{
+		"--input", tracePath,
+		"--checkers", checkersPath,
+		"--output", resultPath,
+	})
+	if err != nil {
+		t.Fatalf("runTraceCommand returned error: %v", err)
+	}
+
+	rootCause := readResultRootCause(t, resultPath)
+	for _, field := range []string{"input", "output", "expected"} {
+		if _, exists := rootCause[field]; exists {
+			t.Fatalf("expected field %q to be omitted", field)
+		}
+	}
+}
+
+// TestRunCommandCanIncludeEvidence verifies explicit full CLI output.
+//
+// Input
+// t pointer to testing.T
+// Test state and failure reporting.
+//
+// Output
+// None
+// The test fails when the evidence flag does not publish raw payloads.
+func TestRunCommandCanIncludeEvidence(t *testing.T) {
+	resultPath := filepath.Join(t.TempDir(), "result.json")
+	tracePath := filepath.Join(
+		"..",
+		"..",
+		"examples",
+		"trace-reference-failure.json",
+	)
+	checkersPath := filepath.Join(
+		"..",
+		"..",
+		"examples",
+		"toy-checkers.json",
+	)
+
+	err := runTraceCommand([]string{
+		"--input", tracePath,
+		"--checkers", checkersPath,
+		"--output", resultPath,
+		"--include-evidence",
+	})
+	if err != nil {
+		t.Fatalf("runTraceCommand returned error: %v", err)
+	}
+
+	rootCause := readResultRootCause(t, resultPath)
+	for _, field := range []string{"input", "output"} {
+		if _, exists := rootCause[field]; !exists {
+			t.Fatalf("expected field %q to be included", field)
+		}
+	}
+}
+
+// TestCreatePrivateFileUsesOwnerPermissions verifies output protection.
+//
+// Input
+// t pointer to testing.T
+// Test state and failure reporting.
+//
+// Output
+// None
+// The test fails when a created file is accessible beyond its owner.
+func TestCreatePrivateFileUsesOwnerPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose portable Unix permission bits")
+	}
+
+	path := filepath.Join(t.TempDir(), "private.json")
+	file, err := createPrivateFile(path, "test file")
+	if err != nil {
+		t.Fatalf("createPrivateFile returned error: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close private file: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat private file: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("expected permissions 0600, got %04o", got)
+	}
+}
+
 func TestDemoCommandRequiresKnownDemo(t *testing.T) {
 	assertErrorContains(t, demoCommand(nil), "demo requires a name")
 	assertErrorContains(t, demoCommand([]string{"unknown"}), `unknown demo "unknown"`)
@@ -517,6 +633,41 @@ func assertErrorContains(t *testing.T, err error, expected string) {
 	if !strings.Contains(err.Error(), expected) {
 		t.Fatalf("expected error containing %q, got %q", expected, err)
 	}
+}
+
+// readResultRootCause reads one JSON result root cause object.
+//
+// Input
+// t pointer to testing.T
+// Active test state.
+//
+// path string
+// Attribution result file.
+//
+// Output
+// map of string to any
+// Decoded root cause fields.
+func readResultRootCause(
+	t *testing.T,
+	path string,
+) map[string]any {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read result file: %v", err)
+	}
+	var result struct {
+		RootCause map[string]any `json:"root_cause"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatalf("decode result file: %v", err)
+	}
+	if result.RootCause == nil {
+		t.Fatal("expected root cause object")
+	}
+
+	return result.RootCause
 }
 
 // writeTestFile writes one temporary CLI input.

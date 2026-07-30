@@ -68,6 +68,59 @@ type AttributionResult struct {
 	CauseEdges                 []CauseEdge  `json:"cause_edges,omitempty"`
 }
 
+// OmitEvidence returns a result without raw pipeline payloads.
+//
+// Input
+// result AttributionResult
+// Completed attribution result containing optional evidence.
+//
+// Output
+// AttributionResult
+// Detached summary with input, output, and expected payloads removed.
+func OmitEvidence(result AttributionResult) AttributionResult {
+	summary := result
+	if result.RootCause != nil {
+		rootCause := rootCauseWithoutEvidence(*result.RootCause)
+		summary.RootCause = &rootCause
+	}
+
+	summary.RootCauses = make(
+		[]RootCause,
+		len(result.RootCauses),
+	)
+	for index, rootCause := range result.RootCauses {
+		summary.RootCauses[index] = rootCauseWithoutEvidence(rootCause)
+	}
+
+	summary.SecondaryDivergences = make(
+		[]RootCause,
+		len(result.SecondaryDivergences),
+	)
+	for index, divergence := range result.SecondaryDivergences {
+		summary.SecondaryDivergences[index] = rootCauseWithoutEvidence(
+			divergence,
+		)
+	}
+
+	return summary
+}
+
+// rootCauseWithoutEvidence copies root cause metadata without raw payloads.
+//
+// Input
+// rootCause RootCause
+// Root cause containing optional evidence.
+//
+// Output
+// RootCause
+// Root cause with input, output, and expected payloads removed.
+func rootCauseWithoutEvidence(rootCause RootCause) RootCause {
+	rootCause.Input = nil
+	rootCause.Output = nil
+	rootCause.Expected = nil
+	return rootCause
+}
+
 // FindRootCause evaluates steps in dependency order.
 //
 // Input
